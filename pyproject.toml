@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autovamp"
+version = "0.1.0"
+description = "Audio player with interactive vamp loops"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "sounddevice",
+    "soundfile",
+]
+
+[project.scripts]
+autovamp = "autovamp.__main__:main"
