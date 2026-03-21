@@ -30,17 +30,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install "nuitka[onefile]"
+          pip install "nuitka[onefile]" ordered-set
           pip install .
-
-      - name: Install Linux build tools
-        if: runner.os == 'Linux'
-        run: sudo apt-get install -y patchelf
 
       - name: Build executable
         run: |
           echo "from autovamp.__main__ import main; main()" > entry.py
-          python -m nuitka --onefile --output-filename=autovamp entry.py
+          python -m nuitka --onefile --assume-yes-for-downloading --output-filename=autovamp entry.py
 
       - name: Zip artifact (Linux/macOS)
         if: runner.os != 'Windows'
