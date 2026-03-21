@@ -52,18 +52,21 @@ page in settings.
 
 ```
 autovamp song.mp3 \
-    --start 00:01:30.000 \
-    --end 00:02:00.000 \
+    --start 1:30 \
+    --end 2:00 \
     --behaviour jump
 ```
+
+Timestamps can be `S`, `MM:SS`, or `HH:MM:SS`, with an
+optional `.mmm` millisecond suffix.
 
 ### Arguments
 
 | Argument      | Description                                   |
 |---------------|-----------------------------------------------|
 | `file`        | Audio file to play (wav, flac, ogg, mp3)      |
-| `--start`     | Vamp start timestamp (`HH:MM:SS.mmm`)         |
-| `--end`       | Vamp end timestamp (`HH:MM:SS.mmm`)           |
+| `--start`     | Vamp start timestamp                          |
+| `--end`       | Vamp end timestamp                            |
 | `--behaviour` | One of: `jump`, `continue`, `safety`,`caesura`|
 | `--version`   | Show version and exit                         |
 

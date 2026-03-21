@@ -5,11 +5,12 @@ from datetime import timedelta
 
 
 def parse_timestamp(ts: str) -> timedelta:
-    """Parse a timestamp string in HH:MM:SS or HH:MM:SS.mmm format.
+    """Parse a timestamp string.
 
-    The millisecond portion is optional. If provided, it is
-    right-padded with zeroes to three digits (so "1.5" is interpreted
-    as 500 milliseconds, not 5 milliseconds).
+    Accepted formats: S, S.mmm, MM:SS, MM:SS.mmm, HH:MM:SS,
+    HH:MM:SS.mmm. The millisecond portion is optional. If
+    provided, it is right-padded with zeroes to three digits
+    (so "1.5" is interpreted as 500 milliseconds).
 
     Args:
         ts (str): The timestamp string to parse.
@@ -29,12 +30,18 @@ def parse_timestamp(ts: str) -> timedelta:
 
     parts = time_part.split(":")
 
-    if len(parts) != 3:
+    if len(parts) == 1:
+        hours, minutes, seconds = 0, 0, int(parts[0])
+    elif len(parts) == 2:
+        hours = 0
+        minutes, seconds = (int(p) for p in parts)
+    elif len(parts) == 3:
+        hours, minutes, seconds = (int(p) for p in parts)
+    else:
         raise ValueError(
-            f"Expected HH:MM:SS or HH:MM:SS.mmm, got: {ts}"
+            f"Expected S, MM:SS, or HH:MM:SS "
+            f"(with optional .mmm), got: {ts}"
         )
-
-    hours, minutes, seconds = (int(p) for p in parts)
 
     return timedelta(
         hours=hours,
