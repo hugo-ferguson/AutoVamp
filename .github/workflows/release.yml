@@ -35,7 +35,8 @@ jobs:
 
       - name: Build executable
         run: |
-          pyinstaller --onefile --name ${{ matrix.artifact }} src/autovamp/__main__.py
+          echo "from autovamp.__main__ import main; main()" > entry.py
+          pyinstaller --onefile --name ${{ matrix.artifact }} entry.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
