@@ -51,15 +51,24 @@ def parse_timestamp(ts: str) -> timedelta:
     )
 
 
-def format_timestamp(td: timedelta) -> str:
-    """Format a timedelta as a HH:MM:SS.mmm timestamp string.
+def format_timestamp(
+    td: timedelta,
+    max_duration: timedelta | None = None,
+) -> str:
+    """Format a timedelta as a timestamp string.
+
+    The format adapts based on max_duration (or the value
+    itself if max_duration is not given): hours and leading
+    digits are omitted when not needed.
 
     Args:
         td (timedelta): The timedelta to format.
+        max_duration (timedelta | None): The longest value
+            that will be displayed alongside this one. Used
+            to keep widths consistent. Defaults to td itself.
 
     Returns:
-        str: A string in HH:MM:SS.mmm format, zero-padded for
-            each component.
+        str: A formatted timestamp string.
     """
     total_seconds = td.total_seconds()
     hours = int(total_seconds // 3600)
@@ -67,10 +76,28 @@ def format_timestamp(td: timedelta) -> str:
     seconds = int(total_seconds % 60)
     milliseconds = int((total_seconds % 1) * 1000)
 
-    return (
-        f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        f".{milliseconds:03d}"
-    )
+    ref = max_duration if max_duration is not None else td
+    ref_seconds = ref.total_seconds()
+    ref_hours = int(ref_seconds // 3600)
+    ref_minutes = int((ref_seconds % 3600) // 60)
+
+    if ref_hours > 0:
+        return (
+            f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            f".{milliseconds:03d}"
+        )
+    elif ref_minutes >= 10:
+        return (
+            f"{minutes:02d}:{seconds:02d}"
+            f".{milliseconds:03d}"
+        )
+    elif ref_minutes >= 1:
+        return (
+            f"{minutes:d}:{seconds:02d}"
+            f".{milliseconds:03d}"
+        )
+    else:
+        return f"{seconds:d}.{milliseconds:03d}"
 
 
 @dataclass

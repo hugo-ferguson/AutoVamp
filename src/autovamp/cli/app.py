@@ -276,8 +276,12 @@ class CliApp:
             total_duration = timedelta(
                 seconds=self._engine.duration_seconds
             )
-            position_str = format_timestamp(position_time)
-            total_str = format_timestamp(total_duration)
+            position_str = format_timestamp(
+                position_time, total_duration,
+            )
+            total_str = format_timestamp(
+                total_duration, total_duration,
+            )
 
             # Calculate how far through the file we are as a
             # fraction, used to determine how much of the
@@ -305,10 +309,12 @@ class CliApp:
                 and state.current_vamp is not None
             ):
                 vamp_start_str = format_timestamp(
-                    state.current_vamp.start_time
+                    state.current_vamp.start_time,
+                    total_duration,
                 )
                 vamp_end_str = format_timestamp(
-                    state.current_vamp.end_time
+                    state.current_vamp.end_time,
+                    total_duration,
                 )
                 vamp_indicator = (
                     f"  {MAGENTA}{BOLD}VAMPING{RESET}"
