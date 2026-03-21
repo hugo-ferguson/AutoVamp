@@ -14,11 +14,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact: autovamp-linux
+            platform: linux
           - os: macos-latest
-            artifact: autovamp-macos
+            platform: macos
           - os: windows-latest
-            artifact: autovamp-windows
+            platform: windows
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -36,13 +36,18 @@ jobs:
       - name: Build executable
         run: |
           echo "from autovamp.__main__ import main; main()" > entry.py
-          pyinstaller --onefile --name ${{ matrix.artifact }} entry.py
+          pyinstaller --onefile --name autovamp entry.py
+
+      - name: Zip artifact
+        run: |
+          cd dist
+          zip autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip autovamp*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}*
+          name: autovamp-${{ github.ref_name }}-${{ matrix.platform }}
+          path: dist/autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip
 
   release:
     needs: build
