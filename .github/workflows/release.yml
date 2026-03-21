@@ -30,31 +30,34 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pyinstaller
+          pip install nuitka
           pip install .
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y patchelf
 
       - name: Build executable
         run: |
           echo "from autovamp.__main__ import main; main()" > entry.py
-          pyinstaller --onefile --name autovamp entry.py
+          python -m nuitka --onefile --output-filename=autovamp entry.py
 
       - name: Zip artifact (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
-          cd dist
-          zip autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip autovamp*
+          zip autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip autovamp
 
       - name: Zip artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/autovamp* -DestinationPath dist/autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip
+          Compress-Archive -Path autovamp.exe -DestinationPath autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: autovamp-${{ github.ref_name }}-${{ matrix.platform }}
-          path: dist/autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip
+          path: autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip
 
   release:
     needs: build
