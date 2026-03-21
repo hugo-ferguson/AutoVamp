@@ -5,12 +5,12 @@ from datetime import timedelta
 
 
 def parse_timestamp(ts: str) -> timedelta:
-    """Parse a timestamp string.
+    """Parse a timestamp string in HH:MM:SS or HH:MM:SS.mmm format.
 
-    Accepted formats: S, S.mmm, MM:SS, MM:SS.mmm, HH:MM:SS,
-    HH:MM:SS.mmm. The millisecond portion is optional. If
-    provided, it is right-padded with zeroes to three digits
-    (so "1.5" is interpreted as 500 milliseconds).
+    The millisecond portion is optional and treated as a
+    decimal fraction of a second (so "0:00:01.5" is 1500ms
+    and "0:00:01.55" is 1550ms). If provided, it is
+    right-padded with zeroes to three digits.
 
     Args:
         ts (str): The timestamp string to parse.
@@ -19,28 +19,23 @@ def parse_timestamp(ts: str) -> timedelta:
         timedelta: A timedelta representing the parsed time.
 
     Raises:
-        ValueError: If the string is not in the expected format.
+        ValueError: If the string is not in HH:MM:SS format.
     """
     if "." in ts:
         time_part, _, ms_part = ts.rpartition(".")
-        milliseconds = int(ms_part.ljust(3, "0"))
+        milliseconds = int(ms_part.ljust(3, "0")[:3])
     else:
         time_part = ts
         milliseconds = 0
 
     parts = time_part.split(":")
 
-    if len(parts) == 1:
-        hours, minutes, seconds = 0, 0, int(parts[0])
-    elif len(parts) == 2:
-        hours = 0
-        minutes, seconds = (int(p) for p in parts)
-    elif len(parts) == 3:
+    if len(parts) == 3:
         hours, minutes, seconds = (int(p) for p in parts)
     else:
         raise ValueError(
-            f"Expected S, MM:SS, or HH:MM:SS "
-            f"(with optional .mmm), got: {ts}"
+            f"Expected HH:MM:SS (with optional .mmm), "
+            f"got: {ts}"
         )
 
     return timedelta(
@@ -51,21 +46,11 @@ def parse_timestamp(ts: str) -> timedelta:
     )
 
 
-def format_timestamp(
-    td: timedelta,
-    max_duration: timedelta | None = None,
-) -> str:
-    """Format a timedelta as a timestamp string.
-
-    The format adapts based on max_duration (or the value
-    itself if max_duration is not given): hours and leading
-    digits are omitted when not needed.
+def format_timestamp(td: timedelta) -> str:
+    """Format a timedelta as an HH:MM:SS.mmm timestamp string.
 
     Args:
         td (timedelta): The timedelta to format.
-        max_duration (timedelta | None): The longest value
-            that will be displayed alongside this one. Used
-            to keep widths consistent. Defaults to td itself.
 
     Returns:
         str: A formatted timestamp string.
@@ -76,28 +61,10 @@ def format_timestamp(
     seconds = int(total_seconds % 60)
     milliseconds = int((total_seconds % 1) * 1000)
 
-    ref = max_duration if max_duration is not None else td
-    ref_seconds = ref.total_seconds()
-    ref_hours = int(ref_seconds // 3600)
-    ref_minutes = int((ref_seconds % 3600) // 60)
-
-    if ref_hours > 0:
-        return (
-            f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            f".{milliseconds:03d}"
-        )
-    elif ref_minutes >= 10:
-        return (
-            f"{minutes:02d}:{seconds:02d}"
-            f".{milliseconds:03d}"
-        )
-    elif ref_minutes >= 1:
-        return (
-            f"{minutes:d}:{seconds:02d}"
-            f".{milliseconds:03d}"
-        )
-    else:
-        return f"{seconds:d}.{milliseconds:03d}"
+    return (
+        f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        f".{milliseconds:03d}"
+    )
 
 
 @dataclass

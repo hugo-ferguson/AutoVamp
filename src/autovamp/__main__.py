@@ -53,13 +53,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--start",
         required=True,
-        help="Vamp start timestamp (S, MM:SS, or HH:MM:SS, with optional .mmm)",
+        help="Vamp start timestamp (HH:MM:SS or HH:MM:SS.mmm)",
     )
 
     parser.add_argument(
         "--end",
         required=True,
-        help="Vamp end timestamp (S, MM:SS, or HH:MM:SS, with optional .mmm)",
+        help="Vamp end timestamp (HH:MM:SS or HH:MM:SS.mmm)",
     )
 
     parser.add_argument(
@@ -108,7 +108,7 @@ def main() -> None:
         print(
             f"Error: --end ({args.end}) exceeds audio "
             f"duration ({format_timestamp(
-                timedelta(seconds=duration_seconds)
+                timedelta(seconds=duration_seconds),
             )})"
         )
         raise SystemExit(1)

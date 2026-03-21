@@ -52,13 +52,13 @@ page in settings.
 
 ```
 autovamp song.mp3 \
-    --start 1:30 \
-    --end 2:00 \
+    --start 0:01:30 \
+    --end 0:02:00 \
     --behaviour jump
 ```
 
-Timestamps can be `S`, `MM:SS`, or `HH:MM:SS`, with an
-optional `.mmm` millisecond suffix.
+Timestamps use `HH:MM:SS` format, with an optional `.mmm`
+millisecond suffix (e.g. `0:01:30.5` for 1 minute 30.5 seconds).
 
 ### Arguments
 

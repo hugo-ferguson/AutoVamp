@@ -68,6 +68,7 @@ class VampEngine:
         self._is_paused: bool = False
         self._current_vamp: Vamp | None = None
         self._is_playing: bool = False
+        self._exit_requested: bool = False
         self._lock: threading.Lock = threading.Lock()
         self._done: threading.Event = threading.Event()
         self._stream: sd.OutputStream | None = None
@@ -152,7 +153,12 @@ class VampEngine:
                 if no vamp is currently active.
         """
         with self._lock:
-            if self._is_vamping and self._current_vamp is not None:
+            if (
+                self._is_vamping
+                and self._current_vamp is not None
+                and not self._exit_requested
+            ):
+                self._exit_requested = True
                 context = self._make_context()
 
                 self._current_vamp.behaviour.on_exit_requested(
@@ -259,6 +265,7 @@ class VampEngine:
                         self._next_vamp_index
                     ]
                     self._is_vamping = True
+                    self._exit_requested = False
                     self._next_vamp_index += 1
 
                     context = self._make_context()
