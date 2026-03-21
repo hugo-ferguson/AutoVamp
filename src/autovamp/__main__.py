@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+from . import __version__
 from datetime import timedelta
 from .models import (
     Vamp,
@@ -36,6 +37,12 @@ def parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(
         description="Audio player with vamp loops",
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"autovamp {__version__}",
     )
 
     parser.add_argument(
