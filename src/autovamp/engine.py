@@ -83,6 +83,11 @@ class VampEngine:
 		return self._total_samples / self._samplerate_hz
 
 	@property
+	def vamps(self) -> list[Vamp]:
+		"""The list of vamp regions, sorted by start time."""
+		return self._vamps
+
+	@property
 	def state(self) -> PlaybackState:
 		"""Return a thread-safe snapshot of the current playback state.
 

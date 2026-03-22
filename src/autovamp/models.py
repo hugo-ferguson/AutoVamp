@@ -104,6 +104,12 @@ class PlaybackState:
 	current_vamp: Vamp | None
 
 
+_MAGENTA = "\033[35m"
+_BLUE = "\033[34m"
+_YELLOW = "\033[33m"
+_GREEN = "\033[32m"
+
+
 class VampBehaviour(ABC):
 	"""Base class for all vamp behaviours.
 
@@ -113,6 +119,17 @@ class VampBehaviour(ABC):
 	override these three hooks to implement different looping and
 	exit strategies.
 	"""
+
+	@abstractmethod
+	def __str__(self) -> str:
+		...
+
+
+	@property
+	@abstractmethod
+	def colour(self) -> str:
+		"""ANSI colour code for this behaviour in the UI."""
+		...
 
 	@property
 	def status_message(self) -> str | None:
@@ -191,6 +208,13 @@ class JumpVamp(VampBehaviour):
 	(without an exit request), it loops back to the start.
 	"""
 
+	def __str__(self) -> str:
+		return "Jump"
+
+	@property
+	def colour(self) -> str:
+		return _YELLOW
+
 	def on_vamp_entry(
 			self, vamp: Vamp, context: PlaybackContext,
 	) -> None:
@@ -229,6 +253,13 @@ class ContinueVamp(VampBehaviour):
 
 	def __init__(self) -> None:
 		self._exit_requested: bool = False
+
+	def __str__(self) -> str:
+		return "Continue"
+
+	@property
+	def colour(self) -> str:
+		return _GREEN
 
 	def on_vamp_entry(
 			self, vamp: Vamp, context: PlaybackContext,
@@ -274,6 +305,13 @@ class Safety(VampBehaviour):
 		self._extra_loops: int = 0
 		self._activated: bool = False
 
+	def __str__(self) -> str:
+		return "Safety"
+
+	@property
+	def colour(self) -> str:
+		return _MAGENTA
+
 	@property
 	def status_message(self) -> str | None:
 		if not self._activated:
@@ -308,7 +346,7 @@ class Safety(VampBehaviour):
 			context.is_vamping = False
 
 
-class CaesuraVamp(VampBehaviour):
+class Caesura(VampBehaviour):
 	"""Pauses playback upon entering the vamp region.
 
 	The audio stops and waits for the user to press SPACE, at
@@ -318,6 +356,13 @@ class CaesuraVamp(VampBehaviour):
 	musical term "caesura", which indicates a pause or break in
 	the music.
 	"""
+
+	def __str__(self) -> str:
+		return "Caesura"
+
+	@property
+	def colour(self) -> str:
+		return _BLUE
 
 	def on_vamp_entry(
 			self, vamp: Vamp, context: PlaybackContext,
