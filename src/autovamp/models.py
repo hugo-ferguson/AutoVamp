@@ -1,3 +1,11 @@
+"""Data models, timestamp utilities, and vamp behaviour definitions.
+
+This module contains the core domain types for AutoVamp: the
+PlaybackContext and PlaybackState snapshots, the VampBehaviour
+abstract base class and its concrete subclasses, and the Vamp
+dataclass that ties a time region to a behaviour.
+"""
+
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -23,6 +31,8 @@ def parse_timestamp(ts: str) -> timedelta:
 	"""
 	if "." in ts:
 		time_part, _, ms_part = ts.rpartition(".")
+		# Right-pad to three digits so "1.5" becomes 500ms, not 5ms,
+		# then truncate to three digits to ignore extra precision.
 		milliseconds = int(ms_part.ljust(3, "0")[:3])
 	else:
 		time_part = ts
@@ -124,7 +134,6 @@ class VampBehaviour(ABC):
 	def __str__(self) -> str:
 		...
 
-
 	@property
 	@abstractmethod
 	def colour(self) -> str:
@@ -142,9 +151,7 @@ class VampBehaviour(ABC):
 		return None
 
 	@abstractmethod
-	def on_vamp_entry(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext, ) -> None:
 		"""Called when the playhead first enters the vamp region.
 
 		Behaviours can use this to set up initial state, pause
@@ -161,9 +168,7 @@ class VampBehaviour(ABC):
 		...
 
 	@abstractmethod
-	def on_exit_requested(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext) -> None:
 		"""Called when the user requests to exit the vamp.
 
 		The behaviour decides how to handle the request. Some
@@ -180,9 +185,7 @@ class VampBehaviour(ABC):
 		...
 
 	@abstractmethod
-	def on_vamp_exit(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext) -> None:
 		"""Called when the playhead reaches the end of the vamp.
 
 		The behaviour decides whether to loop back to the start
@@ -213,32 +216,25 @@ class JumpVamp(VampBehaviour):
 
 	@property
 	def colour(self) -> str:
+		"""Return yellow as the display colour."""
 		return _YELLOW
 
-	def on_vamp_entry(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext) -> None:
+		"""No setup needed on entry."""
 		pass
 
-	def on_exit_requested(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext) -> None:
 		# Move the playhead to the end of the vamp region and
 		# mark it as no longer active, so playback continues
 		# past the vamp.
-		context.position_samples = vamp.end_sample(
-			context.samplerate_hz
-		)
+		context.position_samples = vamp.end_sample(context.samplerate_hz)
 		context.is_vamping = False
 
-	def on_vamp_exit(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext) -> None:
+		"""Loop back to the start of the vamp region."""
 		# The playhead reached the end of the vamp without an
 		# exit request, so loop back to the start.
-		context.position_samples = vamp.start_sample(
-			context.samplerate_hz
-		)
+		context.position_samples = vamp.start_sample(context.samplerate_hz)
 
 
 class ContinueVamp(VampBehaviour):
@@ -252,6 +248,7 @@ class ContinueVamp(VampBehaviour):
 	"""
 
 	def __init__(self) -> None:
+		"""Initialise with no pending exit request."""
 		self._exit_requested: bool = False
 
 	def __str__(self) -> str:
@@ -259,27 +256,26 @@ class ContinueVamp(VampBehaviour):
 
 	@property
 	def colour(self) -> str:
+		"""Return green as the display colour."""
 		return _GREEN
 
-	def on_vamp_entry(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext, ) -> None:
+		"""No setup needed on entry."""
 		pass
 
 	@property
 	def status_message(self) -> str | None:
+		"""Show an exiting message once the user has requested an exit."""
 		if self._exit_requested:
 			return "EXITING VAMP"
 		return None
 
-	def on_exit_requested(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext, ) -> None:
+		"""Flag that the vamp should exit at the end of this iteration."""
 		self._exit_requested = True
 
-	def on_vamp_exit(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext, ) -> None:
+		"""Exit the vamp if requested, otherwise loop back to the start."""
 		if self._exit_requested:
 			# The user previously requested an exit, so stop
 			# vamping and let playback continue past the vamp.
@@ -287,9 +283,7 @@ class ContinueVamp(VampBehaviour):
 			self._exit_requested = False
 		else:
 			# No exit was requested, so loop back to the start.
-			context.position_samples = vamp.start_sample(
-				context.samplerate_hz
-			)
+			context.position_samples = vamp.start_sample(context.samplerate_hz)
 
 
 class Safety(VampBehaviour):
@@ -302,6 +296,7 @@ class Safety(VampBehaviour):
 	"""
 
 	def __init__(self) -> None:
+		"""Initialise with no extra loops queued."""
 		self._extra_loops: int = 0
 		self._activated: bool = False
 
@@ -310,38 +305,35 @@ class Safety(VampBehaviour):
 
 	@property
 	def colour(self) -> str:
+		"""Return magenta as the display colour."""
 		return _MAGENTA
 
 	@property
 	def status_message(self) -> str | None:
+		"""Show the number of queued loops, or an exiting message."""
 		if not self._activated:
 			return None
 		if self._extra_loops > 0:
 			return f"REPEATING VAMP (+{self._extra_loops})"
+
 		return "EXITING VAMP"
 
-	def on_vamp_entry(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext) -> None:
+		"""Reset loop counters when entering a new vamp region."""
 		self._extra_loops = 0
 		self._activated = False
 
-	def on_exit_requested(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext) -> None:
+		"""Queue one additional loop iteration before exiting."""
 		# Each press adds one more guaranteed loop.
 		self._extra_loops += 1
 		self._activated = True
 
-	def on_vamp_exit(
-			self, vamp: Vamp, context: PlaybackContext,
-
-	) -> None:
+	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext) -> None:
+		"""Consume a queued loop or exit the vamp if none remain."""
 		if self._extra_loops > 0:
 			self._extra_loops -= 1
-			context.position_samples = vamp.start_sample(
-				context.samplerate_hz
-			)
+			context.position_samples = vamp.start_sample(context.samplerate_hz)
 		else:
 			context.is_vamping = False
 
@@ -362,27 +354,24 @@ class Caesura(VampBehaviour):
 
 	@property
 	def colour(self) -> str:
+		"""Return blue as the display colour."""
 		return _BLUE
 
-	def on_vamp_entry(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext) -> None:
 		# Pause playback as soon as the vamp region is entered.
 		# The engine will output silence until the user requests
 		# an exit.
 		context.is_paused = True
 
-	def on_exit_requested(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext) -> None:
+		"""Resume playback and continue past the vamp."""
 		# Resume playback and exit the vamp so the audio
 		# continues from where it was paused.
 		context.is_paused = False
 		context.is_vamping = False
 
-	def on_vamp_exit(
-			self, vamp: Vamp, context: PlaybackContext,
-	) -> None:
+	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext) -> None:
+		"""Not reachable because the caesura pauses before the end."""
 		pass
 
 

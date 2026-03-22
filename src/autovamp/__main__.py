@@ -1,5 +1,13 @@
+"""Command-line entry point and argument parsing for AutoVamp.
+
+This module handles CLI argument parsing, TOML config loading,
+vamp construction from user input, and validation before handing
+off to the engine and CLI app.
+"""
+
 from __future__ import annotations
 import argparse
+import os
 import sys
 import tomllib
 from . import __version__
@@ -28,7 +36,7 @@ BEHAVIOURS: dict[str, type[VampBehaviour]] = {
 
 
 def _error(message: str) -> None:
-	"""Print an error message and exit."""
+	"""Print an error message to stdout and exit with code 1."""
 	print(f"Error: {message}")
 	raise SystemExit(1)
 
@@ -45,6 +53,7 @@ def build_vamp(raw: dict[str, str]) -> Vamp:
 	Returns:
 		A validated Vamp instance.
 	"""
+	# Set subtraction gives us any required keys not present in raw.
 	missing = {"start", "end", "behaviour"} - raw.keys()
 	if missing:
 		_error(
@@ -96,7 +105,14 @@ def load_toml(path: str) -> tuple[str, list[Vamp]]:
 
 	vamps = [build_vamp(v) for v in raw_vamps]
 
-	return config["file"], vamps
+	# Resolve the audio file path relative to the TOML file's
+	# directory, so that "file = song.wav" works regardless of
+	# the user's working directory.
+	filepath = config["file"]
+	if not os.path.isabs(filepath):
+		filepath = os.path.join(os.path.dirname(path), filepath)
+
+	return filepath, vamps
 
 
 def parse_vamp_arg(arg: str) -> dict[str, str]:

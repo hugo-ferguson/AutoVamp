@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "autovamp"
 dynamic = ["version"]
 description = "Audio player with interactive vamp loops"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "numpy",
     "sounddevice",

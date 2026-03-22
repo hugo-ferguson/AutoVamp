@@ -1,3 +1,11 @@
+"""Terminal-based user interface for AutoVamp.
+
+This module provides the CliApp class, which renders a
+live-updating progress bar and status display in the terminal
+and handles keyboard input for controlling playback and vamp
+interactions.
+"""
+
 from __future__ import annotations
 from datetime import timedelta
 import os
@@ -65,9 +73,13 @@ class CliApp:
 		self._engine: VampEngine = engine
 		self._filename: str = filename
 		self._key_thread: threading.Thread | None = None
+
 		# Number of terminal lines the previous render occupied.
 		# Used to move the cursor back up before overwriting.
 		self._rendered_lines: int = 0
+		self._vamp_char_colours: dict[int, str] = (
+			self._precompute_vamp_colours()
+		)
 
 	def run(self) -> None:
 		"""Run the CLI application from start to finish.
@@ -84,8 +96,10 @@ class CliApp:
 		self._engine.play()
 		self._status_loop()
 		self._engine.stop()
+
 		if self._key_thread is not None:
 			self._key_thread.join(timeout=1.0)
+
 		print(f"{PAD_Y}{PAD_X}{GREEN}{BOLD}Done.{RESET}{PAD_Y}")
 
 	def _print_header(self) -> None:
@@ -117,12 +131,16 @@ class CliApp:
 		print(PAD_Y, end="")
 		print(f"{PAD_X}{title}")
 		print(sep)
+
 		if file_label:
 			print(file_label)
+
 		print(duration_label)
 		print(rate_label)
 		print(sep)
+
 		vamps = self._engine.vamps
+
 		for i, vamp in enumerate(vamps, 1):
 			colour = vamp.behaviour.colour
 			name = str(vamp.behaviour)
@@ -131,11 +149,13 @@ class CliApp:
 			left = f"({i}) {name}"
 			right = f"{start}–{end}"
 			gap = UI_WIDTH_CHARS - len(left) - len(right)
+
 			print(
 				f"{PAD_X}{colour}{left}{RESET}"
 				f"{' ' * gap}"
 				f"{DIM}{right}{RESET}"
 			)
+
 		print(sep)
 		print(
 			f"{PAD_X}{DIM}SPACE:{RESET} exit vamp   "
@@ -178,6 +198,7 @@ class CliApp:
 			elif char == "q":
 				self._engine.stop()
 				return False
+
 			return True
 
 		if sys.platform == "win32":
@@ -193,13 +214,16 @@ class CliApp:
 			def read_keys() -> None:
 				import termios
 				import tty
+
 				fd = sys.stdin.fileno()
 				old_settings = termios.tcgetattr(fd)
+
 				try:
 					# Switch to raw mode so we receive each
 					# keypress individually without requiring
 					# the user to press Enter.
 					tty.setraw(fd)
+
 					while not self._engine.done.is_set():
 						# Use select with a timeout so we can
 						# periodically check whether the engine
@@ -211,36 +235,56 @@ class CliApp:
 							[],
 							KEY_POLL_INTERVAL_SECONDS,
 						)
+
 						if ready:
-							if not handle_key(
-									sys.stdin.read(1)
-							):
+							if not handle_key(sys.stdin.read(1)):
 								return
 				finally:
 					# Always restore the original terminal
 					# settings, even if an exception occurs, so
 					# the user's shell is not left in raw mode.
-					termios.tcsetattr(
-						fd,
-						termios.TCSADRAIN,
-						old_settings,
-					)
+					termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 		self._key_thread = threading.Thread(
 			target=read_keys, daemon=True,
 		)
+
 		self._key_thread.start()
 
-	def _build_progress_bar(
-			self, fraction: float,
-	) -> str:
+	def _precompute_vamp_colours(self) -> dict[int, str]:
+		"""Map each progress bar character position to a vamp colour.
+
+		Positions that fall outside any vamp region are not
+		included in the dict; callers should default to CYAN.
+		"""
+		duration = self._engine.duration_seconds
+
+		if duration <= 0:
+			return {}
+
+		pos_colours: dict[int, str] = {}
+
+		for vamp in self._engine.vamps:
+			colour = vamp.behaviour.colour
+			vamp_start_frac = (vamp.start_time.total_seconds() / duration)
+			vamp_end_frac = (vamp.end_time.total_seconds() / duration)
+			char_start = int(vamp_start_frac * UI_WIDTH_CHARS)
+			char_end = int(vamp_end_frac * UI_WIDTH_CHARS)
+
+			for i in range(char_start, char_end + 1):
+				if 0 <= i < UI_WIDTH_CHARS:
+					pos_colours[i] = colour
+
+		return pos_colours
+
+	def _build_progress_bar(self, fraction: float, ) -> str:
 		"""Build a text-based progress bar with ANSI colour codes.
 
 		Each character position maps to a time range in the
 		audio file. Characters within a vamp region are coloured
-		magenta; others are cyan. The played portion uses filled
-		block characters and the remaining portion uses dimmed
-		shade characters.
+		using the precomputed colour map; others are cyan. The
+		played portion uses filled block characters and the
+		remaining portion uses dimmed shade characters.
 
 		Args:
 			fraction (float): A value between 0.0 and 1.0
@@ -252,43 +296,20 @@ class CliApp:
 				with ANSI colour codes, ready to be printed to
 				the terminal.
 		"""
-		duration = self._engine.duration_seconds
-		if duration <= 0:
+		if self._engine.duration_seconds <= 0:
 			return f"{DIM}{'░' * UI_WIDTH_CHARS}{RESET}"
 
 		filled_pos = int(fraction * UI_WIDTH_CHARS)
-		filled_pos = max(
-			0, min(filled_pos, UI_WIDTH_CHARS)
-		)
-
-		# Map each character position to the colour of the
-		# vamp it falls within, if any.
-		pos_colours: dict[int, str] = {}
-		for vamp in self._engine.vamps:
-			colour = vamp.behaviour.colour
-			vamp_start_frac = (
-				vamp.start_time.total_seconds() / duration
-			)
-			vamp_end_frac = (
-				vamp.end_time.total_seconds() / duration
-			)
-			char_start = int(
-				vamp_start_frac * UI_WIDTH_CHARS
-			)
-			char_end = int(
-				vamp_end_frac * UI_WIDTH_CHARS
-			)
-			for i in range(char_start, char_end + 1):
-				if 0 <= i < UI_WIDTH_CHARS:
-					pos_colours[i] = colour
+		filled_pos = max(0, min(filled_pos, UI_WIDTH_CHARS))
 
 		# Build the bar character by character, batching
 		# runs of the same style to reduce escape codes.
 		bar = ""
 		prev_code = ""
+
 		for i in range(UI_WIDTH_CHARS):
 			is_filled = i < filled_pos
-			colour = pos_colours.get(i, CYAN)
+			colour = self._vamp_char_colours.get(i, CYAN)
 			if is_filled:
 				code = colour
 				char = "█"
@@ -318,15 +339,11 @@ class CliApp:
 			# Convert the current playhead position from samples
 			# to a human-readable timestamp for display.
 			position_time = timedelta(
-				seconds=(
-						state.position_samples
-						/ self._engine.samplerate_hz
-				)
+				seconds=(state.position_samples / self._engine.samplerate_hz)
 			)
 
-			total_duration = timedelta(
-				seconds=self._engine.duration_seconds
-			)
+			total_duration = timedelta(seconds=self._engine.duration_seconds)
+
 			position_str = format_timestamp(position_time)
 			total_str = format_timestamp(total_duration)
 
@@ -334,35 +351,26 @@ class CliApp:
 			# fraction, used to determine how much of the
 			# progress bar to fill.
 			duration_seconds = self._engine.duration_seconds
+
 			if duration_seconds > 0:
 				progress_fraction = (
-						state.position_samples
-						/ (
-								self._engine.samplerate_hz
-								* duration_seconds
-						)
+					state.position_samples
+					/ (self._engine.samplerate_hz * duration_seconds)
 				)
 			else:
 				progress_fraction = 0.0
-			progress_bar = self._build_progress_bar(
-				progress_fraction,
-			)
+
+			progress_bar = self._build_progress_bar(progress_fraction)
 
 			# Show the vamp region timestamps while we are
 			# inside a vamp.
 			vamp_indicator = ""
 			vamp_colour = CYAN
-			if (
-					state.is_vamping
-					and state.current_vamp is not None
-			):
+
+			if state.is_vamping and state.current_vamp is not None:
 				vamp_colour = state.current_vamp.behaviour.colour
-				vamp_start_str = format_timestamp(
-					state.current_vamp.start_time,
-				)
-				vamp_end_str = format_timestamp(
-					state.current_vamp.end_time,
-				)
+				vamp_start_str = format_timestamp(state.current_vamp.start_time)
+				vamp_end_str = format_timestamp(state.current_vamp.end_time)
 				vamp_indicator = (
 					f"  {vamp_colour}{BOLD}VAMPING{RESET}"
 					f" {DIM}{vamp_start_str}"
@@ -373,9 +381,7 @@ class CliApp:
 			# vamp's behaviour, if one is active.
 			status_message = None
 			if state.current_vamp is not None and state.is_vamping:
-				status_message = (
-					state.current_vamp.behaviour.status_message
-				)
+				status_message = state.current_vamp.behaviour.status_message
 
 			time_display = (
 				f"{BOLD}{position_str}{RESET}"
@@ -390,9 +396,7 @@ class CliApp:
 				f"{vamp_indicator}",
 			]
 			if status_message is not None:
-				second_line = (
-					f"{PAD_X}{vamp_colour}{status_message}{RESET}"
-				)
+				second_line = f"{PAD_X}{vamp_colour}{status_message}{RESET}"
 			else:
 				second_line = ""
 
@@ -405,10 +409,12 @@ class CliApp:
 			output_lines = ""
 			if self._rendered_lines > 1:
 				output_lines += f"\033[{self._rendered_lines - 1}A"
+
 			for i, line in enumerate(lines):
 				if i > 0:
 					output_lines += "\n"
 				output_lines += f"\r{line}\033[K"
+
 			self._rendered_lines = len(lines)
 			print(output_lines, end="", flush=True)
 

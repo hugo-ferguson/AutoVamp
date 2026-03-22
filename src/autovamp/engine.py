@@ -1,3 +1,11 @@
+"""Audio playback engine with vamp loop support.
+
+This module contains the VampEngine class, which loads an audio
+file into memory, plays it through the system's default output
+device, and manages vamp regions that loop sections of audio
+based on configurable behaviours.
+"""
+
 from __future__ import annotations
 
 import threading
@@ -253,9 +261,7 @@ class VampEngine:
 					self._next_vamp_index
 				].start_sample(self._samplerate_hz)
 				):
-					self._current_vamp = self._vamps[
-						self._next_vamp_index
-					]
+					self._current_vamp = self._vamps[self._next_vamp_index]
 					self._is_vamping = True
 					self._next_vamp_index += 1
 
@@ -276,10 +282,7 @@ class VampEngine:
 
 				remaining_frames = frames - written_frames
 
-				if (
-						self._is_vamping
-						and self._current_vamp is not None
-				):
+				if self._is_vamping and self._current_vamp is not None:
 					# We are inside a vamp region. Only copy
 					# samples up to the vamp's end boundary.
 					end_sample = self._current_vamp.end_sample(
@@ -304,9 +307,7 @@ class VampEngine:
 						continue
 
 					end = written_frames + chunk_frames
-					playhead_end = (
-							self._playhead_samples + chunk_frames
-					)
+					playhead_end = (self._playhead_samples + chunk_frames)
 					outdata[written_frames:end] = (
 						self._audio_data[
 							self._playhead_samples:playhead_end
@@ -338,9 +339,7 @@ class VampEngine:
 					if self._next_vamp_index < len(self._vamps):
 						limit_samples = min(
 							limit_samples,
-							self._vamps[
-								self._next_vamp_index
-							].start_sample(
+							self._vamps[self._next_vamp_index].start_sample(
 								self._samplerate_hz,
 							),
 						)
@@ -358,9 +357,7 @@ class VampEngine:
 							self._playhead_samples + chunk_frames
 					)
 					outdata[written_frames:end] = (
-						self._audio_data[
-							self._playhead_samples:playhead_end
-						]
+						self._audio_data[self._playhead_samples:playhead_end]
 					)
 
 					self._playhead_samples += chunk_frames
