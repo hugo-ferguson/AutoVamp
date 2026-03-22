@@ -18,8 +18,8 @@ press `SPACE` to exit the loop:
 
 - `jump`: immediately jumps past the vamp region.
 - `continue`: finishes the current iteration, then moves on.
-- `safety`: plays one additional iteration after you signal
-  the exit, giving you time to prepare.
+- `safety`: exits the vamp at the end of the current loop by
+  default. Press SPACE to add extra loops before exiting.
 - `caesura`: pauses playback when the vamp region is reached.
   Press SPACE to resume.
 
@@ -50,30 +50,56 @@ page in settings.
 
 ## Usage
 
+### Inline mode
+
+Define vamps directly on the command line. Each `--vamp` takes
+a comma-separated list of `key=value` pairs:
+
 ```
 autovamp song.mp3 \
-    --start 1:30 \
-    --end 2:00 \
-    --behaviour jump
+    --vamp start=0:01:30,end=0:02:00,behaviour=jump \
+    --vamp start=0:03:00,end=0:03:30,behaviour=safety
 ```
 
-Timestamps can be `S`, `MM:SS`, or `HH:MM:SS`, with an
-optional `.mmm` millisecond suffix.
+### Config file mode
+
+Create a `.toml` file and pass it as the only argument:
+
+```
+autovamp show.toml
+```
+
+The TOML file format:
+
+```toml
+file = "song.mp3"
+
+[[vamp]]
+start = "0:01:30"
+end = "0:02:00"
+behaviour = "jump"
+
+[[vamp]]
+start = "0:03:00"
+end = "0:03:30"
+behaviour = "safety"
+```
+
+Timestamps use `HH:MM:SS` format, with an optional `.mmm`
+millisecond suffix (e.g. `0:01:30.5` for 1 minute 30.5 seconds).
 
 ### Arguments
 
-| Argument      | Description                                   |
-|---------------|-----------------------------------------------|
-| `file`        | Audio file to play (wav, flac, ogg, mp3)      |
-| `--start`     | Vamp start timestamp                          |
-| `--end`       | Vamp end timestamp                            |
-| `--behaviour` | One of: `jump`, `continue`, `safety`,`caesura`|
-| `--version`   | Show version and exit                         |
+| Argument    | Description                                     |
+|-------------|-------------------------------------------------|
+| `file`      | Audio file (wav, flac, ogg, mp3) or TOML config |
+| `--vamp`    | Inline vamp definition (repeatable)             |
+| `--version` | Show version and exit                           |
 
 ### Controls
 
-- **SPACE** — exit the current vamp (`behaviour` determines how)
-- **Q** — quit
+- **SPACE**: exit the current vamp (`behaviour` determines how)
+- **Q**: quit
 
 ## License
 
