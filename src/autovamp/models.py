@@ -141,6 +141,14 @@ class VampBehaviour(ABC):
 		...
 
 	@property
+	def active_message(self) -> str:
+		"""Label shown in the status line while the vamp is
+		active. Defaults to 'VAMPING'. Subclasses can override
+		for behaviours like Caesura that aren't really vamping.
+		"""
+		return "VAMPING"
+
+	@property
 	def status_message(self) -> str | None:
 		"""A live status message to display in the UI.
 
@@ -357,6 +365,10 @@ class Caesura(VampBehaviour):
 		"""Return blue as the display colour."""
 		return _BLUE
 
+	@property
+	def active_message(self) -> str:
+		return "PAUSED"
+
 	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext) -> None:
 		# Pause playback as soon as the vamp region is entered.
 		# The engine will output silence until the user requests
@@ -384,11 +396,14 @@ class Vamp:
 	the looping and exiting works (for example, immediate jump,
 	finish the current iteration, or play a safety iteration
 	before exiting).
+
+	For point-in-time behaviours like Caesura, end_time can be
+	omitted and defaults to start_time.
 	"""
 
 	start_time: timedelta
-	end_time: timedelta
 	behaviour: VampBehaviour
+	end_time: timedelta | None = None
 
 	def start_sample(self, samplerate_hz: int) -> int:
 		"""Convert the start timestamp to a sample index.
@@ -406,6 +421,9 @@ class Vamp:
 	def end_sample(self, samplerate_hz: int) -> int:
 		"""Convert the end timestamp to a sample index.
 
+		Falls back to start_sample for point-in-time vamps
+		like Caesura where no end time is set.
+
 		Args:
 			samplerate_hz (int): The sample rate of the audio
 				file in Hertz.
@@ -414,4 +432,5 @@ class Vamp:
 			int: The sample index corresponding to the end of
 				this vamp.
 		"""
-		return int(self.end_time.total_seconds() * samplerate_hz)
+		t = self.end_time if self.end_time is not None else self.start_time
+		return int(t.total_seconds() * samplerate_hz)

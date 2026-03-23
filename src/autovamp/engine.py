@@ -152,6 +152,58 @@ class VampEngine:
 
 		self._done.set()
 
+	def toggle_pause(self) -> None:
+		"""Toggle between paused and playing states."""
+		with self._lock:
+			self._is_paused = not self._is_paused
+
+	def seek(self, offset_seconds: float) -> None:
+		"""Seek the playhead by a relative offset in seconds.
+
+		Recalculates vamp state based on the new position.
+
+		Args:
+			offset_seconds: Number of seconds to seek (negative
+				for backwards, positive for forwards).
+		"""
+		with self._lock:
+			prev_vamp = self._current_vamp
+
+			offset_samples = int(offset_seconds * self._samplerate_hz)
+			new_pos = self._playhead_samples + offset_samples
+			new_pos = max(0, min(new_pos, self._total_samples))
+			self._playhead_samples = new_pos
+
+			# Recalculate which vamp is next based on the
+			# new position.
+			self._is_vamping = False
+			self._current_vamp = None
+			self._next_vamp_index = 0
+
+			for i, vamp in enumerate(self._vamps):
+				start = vamp.start_sample(self._samplerate_hz)
+				end = vamp.end_sample(self._samplerate_hz)
+
+				if start <= new_pos < end:
+					self._current_vamp = vamp
+					self._is_vamping = True
+					self._next_vamp_index = i + 1
+
+					# Only trigger entry if this is a
+					# different vamp than we were in.
+					if vamp is not prev_vamp:
+						context = self._make_context()
+						vamp.behaviour.on_vamp_entry(
+							vamp, context,
+						)
+						self._apply_context(context)
+					break
+				elif new_pos < start:
+					self._next_vamp_index = i
+					break
+			else:
+				self._next_vamp_index = len(self._vamps)
+
 	def exit_current_vamp(self) -> None:
 		"""Request that the active vamp begin its exit process.
 

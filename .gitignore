@@ -267,3 +267,6 @@ src/main/resources/dist/*
 /bin/
 .DS_Store
 /src/main/kotlin/com/sourcegraph/cody/agent/protocol_generated/*
+
+# Hugo's test files.
+.test

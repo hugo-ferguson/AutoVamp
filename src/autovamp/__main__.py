@@ -42,32 +42,25 @@ def _error(message: str) -> None:
 
 
 def build_vamp(raw: dict[str, str]) -> Vamp:
-	"""Build a Vamp from a dict with start, end, and behaviour keys.
+	"""Build a Vamp from a dict with start, end, and
+	behaviour keys.
 
 	This is the shared parsing path used by both TOML config
-	files and inline --vamp CLI arguments.
+	files and inline --vamp CLI arguments. The 'end' key is
+	optional for point-in-time behaviours like caesura.
 
 	Args:
-		raw: A dict with 'start', 'end', and 'behaviour' keys.
+		raw: A dict with 'start', 'behaviour', and optionally
+			'end' keys.
 
 	Returns:
 		A validated Vamp instance.
 	"""
-	# Set subtraction gives us any required keys not present in raw.
-	missing = {"start", "end", "behaviour"} - raw.keys()
+	missing = {"start", "behaviour"} - raw.keys()
 	if missing:
 		_error(
 			f"vamp definition missing required keys: "
 			f"{', '.join(sorted(missing))}"
-		)
-
-	start_time = parse_timestamp(raw["start"])
-	end_time = parse_timestamp(raw["end"])
-
-	if start_time >= end_time:
-		_error(
-			f"vamp start ({raw['start']}) must be "
-			f"before end ({raw['end']})"
 		)
 
 	behaviour_name = raw["behaviour"]
@@ -77,10 +70,26 @@ def build_vamp(raw: dict[str, str]) -> Vamp:
 			f"expected one of: {', '.join(BEHAVIOURS)}"
 		)
 
+	start_time = parse_timestamp(raw["start"])
+
+	end_time = None
+	if "end" in raw:
+		end_time = parse_timestamp(raw["end"])
+		if start_time >= end_time:
+			_error(
+				f"vamp start ({raw['start']}) must be "
+				f"before end ({raw['end']})"
+			)
+	elif behaviour_name != "caesura":
+		_error(
+			f"'end' is required for behaviour "
+			f"'{behaviour_name}'"
+		)
+
 	return Vamp(
 		start_time=start_time,
-		end_time=end_time,
 		behaviour=BEHAVIOURS[behaviour_name](),
+		end_time=end_time,
 	)
 
 
@@ -165,7 +174,9 @@ def parse_args() -> argparse.Namespace:
 		metavar="start=T,end=T,behaviour=TYPE",
 		help=(
 			"Define a vamp inline. Can be repeated. "
-			"Example: --vamp start=0:01:30,end=0:02:00,behaviour=jump"
+			"'end' is optional for caesura. "
+			"Example: --vamp start=0:01:30,end=0:02:00,"
+			"behaviour=jump"
 		),
 	)
 
@@ -204,9 +215,10 @@ def main() -> None:
 	# Validate that no vamp extends past the end of the file.
 	duration_seconds = engine.duration_seconds
 	for vamp in vamps:
-		if vamp.end_time.total_seconds() > duration_seconds:
+		check_time = vamp.end_time or vamp.start_time
+		if check_time.total_seconds() > duration_seconds:
 			_error(
-				f"vamp end ({format_timestamp(vamp.end_time)}) "
+				f"vamp at {format_timestamp(check_time)} "
 				f"exceeds audio duration "
 				f"({format_timestamp(
 					timedelta(seconds=duration_seconds),

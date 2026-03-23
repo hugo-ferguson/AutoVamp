@@ -13,15 +13,19 @@ import select
 import sys
 import time
 import threading
-
 from .. import __version__
 from ..engine import VampEngine
 from ..models import format_timestamp
 
-# How often (in seconds) the keyboard input thread checks for
-# new keypresses. A smaller value makes the interface more
-# responsive but uses more CPU.
+# How often (in seconds) the keyboard input thread checks
+# for new keypresses. A smaller value makes the interface
+# more responsive but uses more CPU.
 KEY_POLL_INTERVAL_SECONDS: float = 0.1
+
+# How often (in seconds) the status line redraws. This
+# controls the visual smoothness of the progress bar and
+# timestamp updates.
+CLI_REFRESH_INTERVAL_SECONDS: float = 0.05
 
 # ANSI escape codes used to style terminal output.
 BOLD = "\033[1m"
@@ -38,6 +42,22 @@ UI_WIDTH_CHARS = 44
 PAD_X = " " * 2
 PAD_Y = "\n"
 
+# Each key binding is (raw_bytes, label, description,
+# action). Entries with an empty label are hidden in the
+# header but still dispatched. The action string is either
+# a simple name or "seek:<seconds>" for seeking.
+KEY_BINDINGS: list[tuple[tuple[bytes, ...], str, str, str]] = [
+	((b" ",), "SPACE", "play/pause", "play_pause"),
+	((b"\r", b"\n"), "ENTER", "exit vamp", "exit_vamp"),
+	((b"q",), "Q", "quit", "quit"),
+	((b"\x1b[D",), "\u2190/\u2192", "\u00b15s", "seek:-5"),
+	((b"\x1b[C",), "", "", "seek:5"),
+	((b"\x1b[1;3D",), "ALT+\u2190/\u2192", "\u00b11s", "seek:-1"),
+	((b"\x1b[1;3C",), "", "", "seek:1"),
+	((b"\x1b[1;5D",), "CTRL+\u2190/\u2192", "\u00b130s", "seek:-30"),
+	((b"\x1b[1;5C",), "", "", "seek:30"),
+]
+
 
 class CliApp:
 	"""Terminal-based interface for controlling audio playback
@@ -49,11 +69,6 @@ class CliApp:
 	VampEngine instance which manages the actual audio playback
 	and vamp logic.
 	"""
-
-	# How often (in seconds) the status line redraws. This
-	# controls the visual smoothness of the progress bar and
-	# timestamp updates.
-	CLI_REFRESH_INTERVAL_SECONDS: float = 0.05
 
 	def __init__(
 			self, engine: VampEngine, filename: str = "",
@@ -145,9 +160,14 @@ class CliApp:
 			colour = vamp.behaviour.colour
 			name = str(vamp.behaviour)
 			start = format_timestamp(vamp.start_time)
-			end = format_timestamp(vamp.end_time)
 			left = f"({i}) {name}"
-			right = f"{start}–{end}"
+
+			if vamp.end_time is not None:
+				end = format_timestamp(vamp.end_time)
+				right = f"{start}\u2013{end}"
+			else:
+				right = start
+
 			gap = UI_WIDTH_CHARS - len(left) - len(right)
 
 			print(
@@ -157,10 +177,11 @@ class CliApp:
 			)
 
 		print(sep)
-		print(
-			f"{PAD_X}{DIM}SPACE:{RESET} exit vamp   "
-			f"{DIM}Q:{RESET} quit"
-		)
+
+		for _, label, desc, _ in KEY_BINDINGS:
+			if label:
+				print(f"{PAD_X}{DIM}{label}:{RESET} {desc}")
+
 		print(sep)
 		print(PAD_Y, end="")
 
@@ -178,26 +199,31 @@ class CliApp:
 		prevent the process from exiting if something goes wrong.
 		"""
 
-		def handle_key(char: str) -> bool:
-			"""Process a single keypress.
+		# Build a dispatch map: raw bytes → action string.
+		dispatch: dict[bytes, str] = {}
+		for raw_seqs, _, _, action in KEY_BINDINGS:
+			for raw in raw_seqs:
+				dispatch[raw] = action
 
-			Args:
-				char (str): The character that was pressed.
+		def handle_input(data: bytes) -> bool:
+			"""Process raw input bytes from the terminal.
 
 			Returns:
-				bool: True if the key reader should continue
-					listening for input, False if the user
-					requested to quit and the thread should stop.
+				bool: True to keep listening, False to quit.
 			"""
-			if char == " ":
-				# Ask the engine to begin exiting the current
-				# vamp. The engine delegates to the vamp's
-				# behaviour, which may exit immediately or allow
-				# a set number of remaining iterations first.
+			action = dispatch.get(data)
+
+			if action is None:
+				return True
+			elif action == "play_pause":
+				self._engine.toggle_pause()
+			elif action == "exit_vamp":
 				self._engine.exit_current_vamp()
-			elif char == "q":
+			elif action == "quit":
 				self._engine.stop()
 				return False
+			elif action.startswith("seek:"):
+				self._engine.seek(float(action.split(":")[1]))
 
 			return True
 
@@ -206,7 +232,8 @@ class CliApp:
 				import msvcrt
 				while not self._engine.done.is_set():
 					if msvcrt.kbhit():
-						if not handle_key(msvcrt.getwch()):
+						ch = msvcrt.getwch()
+						if not handle_input(ch.encode()):
 							return
 					else:
 						time.sleep(KEY_POLL_INTERVAL_SECONDS)
@@ -230,14 +257,19 @@ class CliApp:
 						# has finished, rather than blocking
 						# indefinitely on stdin.
 						ready, _, _ = select.select(
-							[sys.stdin],
-							[],
-							[],
+							[fd], [], [],
 							KEY_POLL_INTERVAL_SECONDS,
 						)
 
 						if ready:
-							if not handle_key(sys.stdin.read(1)):
+							# Read up to 32 bytes at once so
+							# that multi-byte escape sequences
+							# (e.g. arrow keys) arrive as a
+							# single chunk.
+							data = os.read(fd, 32)
+							if not data:
+								return
+							if not handle_input(data):
 								return
 				finally:
 					# Always restore the original terminal
@@ -267,9 +299,14 @@ class CliApp:
 		for vamp in self._engine.vamps:
 			colour = vamp.behaviour.colour
 			vamp_start_frac = (vamp.start_time.total_seconds() / duration)
-			vamp_end_frac = (vamp.end_time.total_seconds() / duration)
+
+			if vamp.end_time is not None:
+				vamp_end_frac = (vamp.end_time.total_seconds() / duration)
+			else:
+				vamp_end_frac = vamp_start_frac
+
 			char_start = int(vamp_start_frac * UI_WIDTH_CHARS)
-			char_end = int(vamp_end_frac * UI_WIDTH_CHARS)
+			char_end = max(char_start, int(vamp_end_frac * UI_WIDTH_CHARS))
 
 			for i in range(char_start, char_end + 1):
 				if 0 <= i < UI_WIDTH_CHARS:
@@ -354,8 +391,8 @@ class CliApp:
 
 			if duration_seconds > 0:
 				progress_fraction = (
-					state.position_samples
-					/ (self._engine.samplerate_hz * duration_seconds)
+						state.position_samples
+						/ (self._engine.samplerate_hz * duration_seconds)
 				)
 			else:
 				progress_fraction = 0.0
@@ -369,12 +406,25 @@ class CliApp:
 
 			if state.is_vamping and state.current_vamp is not None:
 				vamp_colour = state.current_vamp.behaviour.colour
-				vamp_start_str = format_timestamp(state.current_vamp.start_time)
-				vamp_end_str = format_timestamp(state.current_vamp.end_time)
+				vamp_start_str = format_timestamp(
+					state.current_vamp.start_time,
+				)
+
+				if state.current_vamp.end_time is not None:
+					vamp_end_str = format_timestamp(
+						state.current_vamp.end_time,
+					)
+					vamp_range = (
+						f"{vamp_start_str}"
+						f"\u2013{vamp_end_str}"
+					)
+				else:
+					vamp_range = vamp_start_str
+
+				active_msg = state.current_vamp.behaviour.active_message
 				vamp_indicator = (
-					f"  {vamp_colour}{BOLD}VAMPING{RESET}"
-					f" {DIM}{vamp_start_str}"
-					f"–{vamp_end_str}{RESET}"
+					f"  {vamp_colour}{BOLD}{active_msg}{RESET}"
+					f" {DIM}{vamp_range}{RESET}"
 				)
 
 			# Read the live status message from the current
@@ -418,4 +468,4 @@ class CliApp:
 			self._rendered_lines = len(lines)
 			print(output_lines, end="", flush=True)
 
-			time.sleep(self.CLI_REFRESH_INTERVAL_SECONDS)
+			time.sleep(CLI_REFRESH_INTERVAL_SECONDS)
