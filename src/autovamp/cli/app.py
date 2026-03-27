@@ -1,9 +1,7 @@
 """Terminal-based user interface for AutoVamp.
 
-This module provides the CliApp class, which renders a
-live-updating progress bar and status display in the terminal
-and handles keyboard input for controlling playback and vamp
-interactions.
+Renders a live-updating progress bar and status display and
+handles keyboard input for controlling playback.
 """
 
 from __future__ import annotations
@@ -17,35 +15,30 @@ from .. import __version__
 from ..engine import VampEngine
 from ..models import format_timestamp
 
-# How often (in seconds) the keyboard input thread checks
-# for new keypresses. A smaller value makes the interface
-# more responsive but uses more CPU.
+# Keyboard polling interval in seconds. Smaller values are
+# more responsive but use more CPU.
 KEY_POLL_INTERVAL_SECONDS: float = 0.1
 
-# How often (in seconds) the status line redraws. This
-# controls the visual smoothness of the progress bar and
-# timestamp updates.
+# Status line redraw interval in seconds.
 CLI_REFRESH_INTERVAL_SECONDS: float = 0.05
 
-# ANSI escape codes used to style terminal output.
+# ANSI escape codes for terminal styling.
 BOLD = "\033[1m"
 DIM = "\033[2m"
 RESET = "\033[0m"
 CYAN = "\033[36m"
 GREEN = "\033[32m"
 
-# The number of characters wide the progress bar is rendered
-# in the terminal.
+# Progress bar width in characters.
 UI_WIDTH_CHARS = 44
 
 # Horizontal and vertical padding for the UI layout.
 PAD_X = " " * 2
 PAD_Y = "\n"
 
-# Each key binding is (raw_bytes, label, description,
-# action). Entries with an empty label are hidden in the
-# header but still dispatched. The action string is either
-# a simple name or "seek:<seconds>" for seeking.
+# Key bindings: (raw_bytes, label, description, action).
+# Entries with an empty label are hidden in the header but
+# still dispatched. Action is a name or "seek:<seconds>".
 KEY_BINDINGS: list[tuple[tuple[bytes, ...], str, str, str]] = [
 	((b" ",), "SPACE", "play/pause", "play_pause"),
 	((b"\r", b"\n"), "ENTER", "exit vamp", "exit_vamp"),
@@ -56,18 +49,16 @@ KEY_BINDINGS: list[tuple[tuple[bytes, ...], str, str, str]] = [
 	((b"\x1b[1;3C",), "", "", "seek:1"),
 	((b"\x1b[1;5D",), "CTRL+\u2190/\u2192", "\u00b130s", "seek:-30"),
 	((b"\x1b[1;5C",), "", "", "seek:30"),
+	((b"\x1b",), "ESC", "restart", "restart"),
 ]
 
 
 class CliApp:
-	"""Terminal-based interface for controlling audio playback
-	with vamp loops.
+	"""Terminal interface for audio playback with vamp loops.
 
-	This class renders a live-updating status line showing
-	playback progress, the current vamp state, and handles
-	keyboard input for user interaction. It reads from a
-	VampEngine instance which manages the actual audio playback
-	and vamp logic.
+	Renders a live status line with progress bar and vamp state,
+	and handles keyboard input. Reads from a VampEngine which
+	manages the actual audio playback and vamp logic.
 	"""
 
 	def __init__(
@@ -76,35 +67,27 @@ class CliApp:
 		"""Initialise the CLI application.
 
 		Args:
-			engine (VampEngine): The VampEngine instance that
-				handles audio playback and vamp behaviour. The
-				CLI reads state from this engine and sends user
-				commands (exit vamp, quit) back to it.
-			filename (str): The path to the audio file being
-				played. Used only for display purposes in the
-				header. If empty, the file label is omitted from
-				the header.
+			engine: The VampEngine that handles audio playback
+				and vamp behaviour.
+			filename: Path to the audio file, shown in the
+				header. If empty, the file label is omitted.
 		"""
 		self._engine: VampEngine = engine
 		self._filename: str = filename
 		self._key_thread: threading.Thread | None = None
 
-		# Number of terminal lines the previous render occupied.
-		# Used to move the cursor back up before overwriting.
+		# Terminal lines occupied by the previous render,
+		# used to move the cursor back before overwriting.
 		self._rendered_lines: int = 0
 		self._vamp_char_colours: dict[int, str] = (
 			self._precompute_vamp_colours()
 		)
 
 	def run(self) -> None:
-		"""Run the CLI application from start to finish.
+		"""Run the CLI from start to finish.
 
-		This is the main entry point. It prints the header,
-		starts listening for keyboard input on a background
-		thread, begins audio playback, and then blocks on the
-		status loop until playback completes or the user quits.
-		After the loop exits, it stops the engine and waits for
-		the keyboard thread to shut down.
+		Prints the header, starts the key reader thread, begins
+		playback, and blocks on the status loop until done.
 		"""
 		self._print_header()
 		self._start_key_reader()
@@ -118,19 +101,13 @@ class CliApp:
 		print(f"{PAD_Y}{PAD_X}{GREEN}{BOLD}Done.{RESET}{PAD_Y}")
 
 	def _print_header(self) -> None:
-		"""Print the initial header block to the terminal.
-
-		Displays the application title, audio file metadata
-		(filename, duration, sample rate), and the available
-		keyboard controls.
-		"""
+		"""Print the header: title, file metadata, vamp list,
+		and keyboard controls."""
 		title = f"{BOLD}{CYAN}AutoVamp{RESET} {DIM}(v{__version__}){RESET}"
 		sep = f"{PAD_X}{'─' * UI_WIDTH_CHARS}"
 
 		file_label = ""
 		if self._filename:
-			# Only show the base filename, not the full path, to
-			# keep the header compact and readable.
 			basename = os.path.basename(self._filename)
 			file_label = f"{PAD_X}{DIM}File:{RESET} {basename}"
 
@@ -186,20 +163,13 @@ class CliApp:
 		print(PAD_Y, end="")
 
 	def _start_key_reader(self) -> None:
-		"""Start a background thread that listens for keyboard input.
+		"""Start a daemon thread that listens for keyboard input.
 
-		Keyboard reading requires platform-specific code. On
-		Windows, we use msvcrt to poll for keypresses. On Unix
-		systems, we switch stdin to raw mode using termios so
-		that individual characters are delivered immediately
-		without waiting for the user to press Enter. The original
-		terminal settings are restored when the thread exits.
-
-		The background thread runs as a daemon so it will not
-		prevent the process from exiting if something goes wrong.
+		On Windows, uses msvcrt polling. On Unix, switches stdin
+		to raw mode via termios and restores it on exit.
 		"""
 
-		# Build a dispatch map: raw bytes → action string.
+		# Build a dispatch map: raw bytes -> action string.
 		dispatch: dict[bytes, str] = {}
 		for raw_seqs, _, _, action in KEY_BINDINGS:
 			for raw in raw_seqs:
@@ -208,8 +178,11 @@ class CliApp:
 		def handle_input(data: bytes) -> bool:
 			"""Process raw input bytes from the terminal.
 
+			Args:
+				data: Raw bytes received from stdin.
+
 			Returns:
-				bool: True to keep listening, False to quit.
+				True to keep listening, False to quit.
 			"""
 			action = dispatch.get(data)
 
@@ -222,6 +195,8 @@ class CliApp:
 			elif action == "quit":
 				self._engine.stop()
 				return False
+			elif action == "restart":
+				self._engine.seek(-1e9)
 			elif action.startswith("seek:"):
 				self._engine.seek(float(action.split(":")[1]))
 
@@ -246,35 +221,25 @@ class CliApp:
 				old_settings = termios.tcgetattr(fd)
 
 				try:
-					# Switch to raw mode so we receive each
-					# keypress individually without requiring
-					# the user to press Enter.
 					tty.setraw(fd)
 
 					while not self._engine.done.is_set():
-						# Use select with a timeout so we can
-						# periodically check whether the engine
-						# has finished, rather than blocking
-						# indefinitely on stdin.
+						# Poll with a timeout so we can check
+						# if the engine has finished.
 						ready, _, _ = select.select(
 							[fd], [], [],
 							KEY_POLL_INTERVAL_SECONDS,
 						)
 
 						if ready:
-							# Read up to 32 bytes at once so
-							# that multi-byte escape sequences
-							# (e.g. arrow keys) arrive as a
-							# single chunk.
+							# Read up to 32 bytes so multi-byte
+							# escape sequences arrive as one chunk.
 							data = os.read(fd, 32)
 							if not data:
 								return
 							if not handle_input(data):
 								return
 				finally:
-					# Always restore the original terminal
-					# settings, even if an exception occurs, so
-					# the user's shell is not left in raw mode.
 					termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 		self._key_thread = threading.Thread(
@@ -284,10 +249,13 @@ class CliApp:
 		self._key_thread.start()
 
 	def _precompute_vamp_colours(self) -> dict[int, str]:
-		"""Map each progress bar character position to a vamp colour.
+		"""Map each progress bar character position to a colour.
 
-		Positions that fall outside any vamp region are not
-		included in the dict; callers should default to CYAN.
+		Positions outside any vamp region are not included;
+		callers should default to CYAN.
+
+		Returns:
+			A dict mapping character index to ANSI colour code.
 		"""
 		duration = self._engine.duration_seconds
 
@@ -315,23 +283,18 @@ class CliApp:
 		return pos_colours
 
 	def _build_progress_bar(self, fraction: float, ) -> str:
-		"""Build a text-based progress bar with ANSI colour codes.
+		"""Build a coloured text progress bar.
 
-		Each character position maps to a time range in the
-		audio file. Characters within a vamp region are coloured
-		using the precomputed colour map; others are cyan. The
-		played portion uses filled block characters and the
-		remaining portion uses dimmed shade characters.
+		Each character maps to a time range. Vamp regions use
+		their behaviour's colour; other positions use cyan. The
+		played portion is filled blocks, the rest dimmed shading.
 
 		Args:
-			fraction (float): A value between 0.0 and 1.0
-				representing how far through the audio file
-				playback has progressed.
+			fraction: 0.0 to 1.0 representing playback progress.
 
 		Returns:
-			str: A string containing the rendered progress bar
-				with ANSI colour codes, ready to be printed to
-				the terminal.
+			A string containing the progress bar with ANSI
+			colour codes, ready for printing.
 		"""
 		if self._engine.duration_seconds <= 0:
 			return f"{DIM}{'░' * UI_WIDTH_CHARS}{RESET}"
@@ -339,8 +302,8 @@ class CliApp:
 		filled_pos = int(fraction * UI_WIDTH_CHARS)
 		filled_pos = max(0, min(filled_pos, UI_WIDTH_CHARS))
 
-		# Build the bar character by character, batching
-		# runs of the same style to reduce escape codes.
+		# Build character by character, batching runs of the
+		# same style to reduce escape codes.
 		bar = ""
 		prev_code = ""
 
@@ -361,20 +324,15 @@ class CliApp:
 		return bar + RESET
 
 	def _status_loop(self) -> None:
-		"""Continuously redraw the status line until playback ends.
+		"""Redraw the status line until playback ends.
 
-		This loop runs on the main thread and polls the engine
-		for its current state at a regular interval. Each
-		iteration overwrites the same terminal line using a
-		carriage return, creating a live-updating display that
-		shows the progress bar, current timestamp, vamp status,
-		and any pending exit message.
+		Polls the engine state at a regular interval and
+		overwrites the same terminal lines each frame.
 		"""
 		while not self._engine.done.is_set():
 			state = self._engine.state
 
-			# Convert the current playhead position from samples
-			# to a human-readable timestamp for display.
+			# Convert playhead position to a timestamp.
 			position_time = timedelta(
 				seconds=(state.position_samples / self._engine.samplerate_hz)
 			)
@@ -384,9 +342,7 @@ class CliApp:
 			position_str = format_timestamp(position_time)
 			total_str = format_timestamp(total_duration)
 
-			# Calculate how far through the file we are as a
-			# fraction, used to determine how much of the
-			# progress bar to fill.
+			# Progress fraction for the bar fill level.
 			duration_seconds = self._engine.duration_seconds
 
 			if duration_seconds > 0:
@@ -399,8 +355,7 @@ class CliApp:
 
 			progress_bar = self._build_progress_bar(progress_fraction)
 
-			# Show the vamp region timestamps while we are
-			# inside a vamp.
+			# Show vamp region timestamps while vamping.
 			vamp_indicator = ""
 			vamp_colour = CYAN
 
@@ -427,8 +382,6 @@ class CliApp:
 					f" {DIM}{vamp_range}{RESET}"
 				)
 
-			# Read the live status message from the current
-			# vamp's behaviour, if one is active.
 			status_message = None
 			if state.current_vamp is not None and state.is_vamping:
 				status_message = state.current_vamp.behaviour.status_message
@@ -438,9 +391,6 @@ class CliApp:
 				f" {DIM}/{RESET} {total_str}"
 			)
 
-			# Build the list of lines to render. The progress
-			# bar and timestamps are always shown. The status
-			# message appears on a separate line below.
 			lines = [
 				f"{PAD_X}{progress_bar}  {time_display}"
 				f"{vamp_indicator}",
@@ -453,9 +403,7 @@ class CliApp:
 			lines.append("")
 			lines.append(second_line)
 
-			# Move the cursor back up to overwrite all lines
-			# from the previous render, then print each line
-			# clearing any leftover characters.
+			# Move cursor back up and overwrite previous lines.
 			output_lines = ""
 			if self._rendered_lines > 1:
 				output_lines += f"\033[{self._rendered_lines - 1}A"

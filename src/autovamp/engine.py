@@ -1,9 +1,8 @@
 """Audio playback engine with vamp loop support.
 
-This module contains the VampEngine class, which loads an audio
-file into memory, plays it through the system's default output
-device, and manages vamp regions that loop sections of audio
-based on configurable behaviours.
+Loads an audio file into memory, plays it through the default
+output device, and manages vamp regions that loop sections of
+audio based on configurable behaviours.
 """
 
 from __future__ import annotations
@@ -18,18 +17,12 @@ from .models import Vamp, PlaybackContext, PlaybackState
 
 
 class VampEngine:
-	"""Audio playback engine with support for vamp loop regions.
+	"""Audio playback engine with vamp loop regions.
 
-	The engine loads an audio file into memory, plays it through
-	the default audio output device using sounddevice, and manages
-	vamp regions. Vamps are sections of audio that loop repeatedly,
-	with configurable behaviours that control how the looping and
-	exiting works.
-
-	All mutable state is protected by a lock so that the audio
-	callback (which runs on a real-time thread managed by
-	PortAudio) and the main thread (which handles user input via
-	the CLI) can safely interact.
+	Loads an audio file, plays it via sounddevice, and manages
+	vamp regions with configurable looping behaviours. All
+	mutable state is lock-protected so the real-time PortAudio
+	callback and the main thread can safely interact.
 	"""
 
 	BLOCK_SIZE: int = 512
@@ -40,21 +33,14 @@ class VampEngine:
 			vamps: list[Vamp],
 			block_size: int = BLOCK_SIZE,
 	) -> None:
-		"""Load an audio file and prepare the engine for playback.
-
-		The entire audio file is read into memory as a float32
-		numpy array. Vamps are sorted by their start time so they
-		can be processed sequentially as the playhead advances.
+		"""Load an audio file and prepare for playback.
 
 		Args:
-			filepath (str): Path to the audio file to play. Any
-				format supported by libsndfile (wav, flac, ogg,
-				etc.) is accepted.
-			vamps (list[Vamp]): List of Vamp instances defining
-				the loop regions.
-			block_size (int): Number of audio frames per callback
-				invocation. Smaller values reduce latency but
-				increase CPU overhead.
+			filepath: Path to the audio file (any format
+				supported by libsndfile).
+			vamps: List of Vamp instances defining loop regions.
+			block_size: Audio frames per callback. Smaller values
+				reduce latency but increase CPU overhead.
 		"""
 		self._audio_data, self._samplerate_hz = sf.read(
 			filepath, dtype="float32", always_2d=True
@@ -63,13 +49,11 @@ class VampEngine:
 		self._total_samples: int = self._audio_data.shape[0]
 		self._channels: int = self._audio_data.shape[1]
 		self._block_size: int = block_size
-		# Sort vamps by start time so we can step through them in
-		# order as the playhead advances through the file.
+		# Sorted by start time for sequential processing.
 		self._vamps: list[Vamp] = sorted(
 			vamps, key=lambda v: v.start_time
 		)
-		# Index of the next vamp to enter. Incremented each time
-		# the playhead crosses a vamp's start boundary.
+		# Index of the next vamp to enter.
 		self._next_vamp_index: int = 0
 		self._playhead_samples: int = 0
 		self._is_vamping: bool = False
@@ -82,12 +66,12 @@ class VampEngine:
 
 	@property
 	def samplerate_hz(self) -> int:
-		"""The sample rate of the loaded audio file in Hertz."""
+		"""The sample rate of the loaded audio in Hertz."""
 		return self._samplerate_hz
 
 	@property
 	def duration_seconds(self) -> float:
-		"""The total duration of the loaded audio file in seconds."""
+		"""Total duration of the loaded audio in seconds."""
 		return self._total_samples / self._samplerate_hz
 
 	@property
@@ -97,11 +81,7 @@ class VampEngine:
 
 	@property
 	def state(self) -> PlaybackState:
-		"""Return a thread-safe snapshot of the current playback state.
-
-		This is used by the CLI to read the engine's state without
-		holding the lock for an extended period.
-		"""
+		"""Thread-safe snapshot of the current playback state."""
 		with self._lock:
 			return PlaybackState(
 				position_samples=self._playhead_samples,
@@ -113,16 +93,11 @@ class VampEngine:
 
 	@property
 	def done(self) -> threading.Event:
-		"""An event that is set when playback has finished or been stopped."""
+		"""Set when playback has finished or been stopped."""
 		return self._done
 
 	def play(self) -> None:
-		"""Start audio playback.
-
-		Opens a sounddevice output stream and begins sending audio
-		data to the default output device. The audio callback runs
-		on a separate real-time thread managed by PortAudio.
-		"""
+		"""Start audio playback via the default output device."""
 		with self._lock:
 			self._is_playing = True
 
@@ -136,12 +111,7 @@ class VampEngine:
 		self._stream.start()
 
 	def stop(self) -> None:
-		"""Stop audio playback and signal that the engine is done.
-
-		Stops and closes the audio stream if one is open, and sets
-		the done event so that any threads waiting on it (such as
-		the CLI status loop or the key reader) can exit.
-		"""
+		"""Stop playback and signal that the engine is done."""
 		with self._lock:
 			self._is_playing = False
 
@@ -160,11 +130,11 @@ class VampEngine:
 	def seek(self, offset_seconds: float) -> None:
 		"""Seek the playhead by a relative offset in seconds.
 
-		Recalculates vamp state based on the new position.
+		Clamps to valid bounds and recalculates vamp state.
 
 		Args:
-			offset_seconds: Number of seconds to seek (negative
-				for backwards, positive for forwards).
+			offset_seconds: Seconds to seek (negative for
+				backwards, positive for forwards).
 		"""
 		with self._lock:
 			prev_vamp = self._current_vamp
@@ -174,8 +144,7 @@ class VampEngine:
 			new_pos = max(0, min(new_pos, self._total_samples))
 			self._playhead_samples = new_pos
 
-			# Recalculate which vamp is next based on the
-			# new position.
+			# Recalculate which vamp we are in or approaching.
 			self._is_vamping = False
 			self._current_vamp = None
 			self._next_vamp_index = 0
@@ -189,8 +158,7 @@ class VampEngine:
 					self._is_vamping = True
 					self._next_vamp_index = i + 1
 
-					# Only trigger entry if this is a
-					# different vamp than we were in.
+					# Only trigger entry if we changed vamps.
 					if vamp is not prev_vamp:
 						context = self._make_context()
 						vamp.behaviour.on_vamp_entry(
@@ -205,12 +173,7 @@ class VampEngine:
 				self._next_vamp_index = len(self._vamps)
 
 	def exit_current_vamp(self) -> None:
-		"""Request that the active vamp begin its exit process.
-
-		Delegates to the current vamp's behaviour, which decides
-		how to handle the exit (for example, jumping immediately
-		or finishing the current iteration first).
-		"""
+		"""Ask the active vamp's behaviour to begin exiting."""
 		with self._lock:
 			if self._is_vamping and self._current_vamp is not None:
 				context = self._make_context()
@@ -222,11 +185,13 @@ class VampEngine:
 				self._apply_context(context)
 
 	def _make_context(self) -> PlaybackContext:
-		"""Create a PlaybackContext from the engine's current state.
+		"""Create a mutable PlaybackContext from the current state.
 
-		The returned context is a mutable copy that vamp behaviours
-		can modify. Changes are applied back to the engine via
-		_apply_context. Must be called while holding the lock.
+		Behaviours modify this context, then changes are applied
+		back via _apply_context. Must hold the lock.
+
+		Returns:
+			A PlaybackContext reflecting the engine's state.
 		"""
 		return PlaybackContext(
 			position_samples=self._playhead_samples,
@@ -236,15 +201,13 @@ class VampEngine:
 		)
 
 	def _apply_context(self, context: PlaybackContext) -> None:
-		"""Apply changes from a PlaybackContext back to the engine.
+		"""Apply a behaviour-modified context back to the engine.
 
-		This is called after a vamp behaviour has had the
-		opportunity to modify the context. Must be called while
-		holding the lock.
+		Must hold the lock.
 
 		Args:
-			context (PlaybackContext): The context whose values
-				should be copied into the engine's internal state.
+			context: The context whose values should be copied
+				into the engine's internal state.
 		"""
 		self._playhead_samples = context.position_samples
 		self._is_vamping = context.is_vamping
@@ -257,31 +220,19 @@ class VampEngine:
 			time_info: object,
 			status: sd.CallbackFlags,
 	) -> None:
-		"""Audio callback invoked by PortAudio to fill the buffer.
+		"""PortAudio callback that fills the output buffer.
 
-		This runs on a real-time thread and must not block,
-		allocate memory, or perform any operation that could cause
-		priority inversion. All state access is protected by the
-		engine's lock.
-
-		The callback fills the output buffer by copying samples
-		from the loaded audio data. It handles three cases within
-		a single buffer:
-
-		1. Normal playback outside of any vamp region.
-		2. Playback inside a vamp region, which may trigger vamp
-		   entry, exit, or looping callbacks.
-		3. End of file, where the remaining buffer is zero-filled.
+		Runs on a real-time thread. Handles normal playback,
+		vamp region looping, and end-of-file zero-filling.
 
 		Args:
-			outdata (np.ndarray): The output buffer to fill with
-				audio samples. Its shape is (frames, channels).
-			frames (int): The number of frames to write into the
-				output buffer.
-			time_info (object): Timing information from PortAudio
+			outdata: The output buffer to fill. Shape is
+				(frames, channels).
+			frames: Number of frames to write into the buffer.
+			time_info: Timing information from PortAudio
 				(not used).
-			status (sd.CallbackFlags): Flags indicating whether an
-				underflow or overflow occurred (not used).
+			status: Flags indicating underflow or overflow
+				(not used).
 		"""
 		with self._lock:
 			if not self._is_playing:
@@ -295,16 +246,14 @@ class VampEngine:
 			written_frames = 0
 
 			while written_frames < frames:
-				# Check if we have reached the end of the audio.
 				if self._playhead_samples >= self._total_samples:
 					outdata[written_frames:] = 0
 					self._is_playing = False
 					self._done.set()
 					return
 
-				# Check if the playhead has crossed into the next
-				# vamp's start boundary. If so, activate that vamp
-				# and notify its behaviour.
+				# If playback has moved into the next vamp,
+				# activate it.
 				if (
 						not self._is_vamping
 						and self._next_vamp_index < len(self._vamps)
@@ -325,9 +274,8 @@ class VampEngine:
 
 					self._apply_context(context)
 
-					# If the behaviour paused playback on entry
-					# (as the CaesuraVamp does), zero-fill the
-					# rest of the buffer and return immediately.
+					# If the behaviour paused on entry (as
+					# Caesura does), zero-fill and return.
 					if self._is_paused:
 						outdata[written_frames:] = 0
 						return
@@ -335,8 +283,7 @@ class VampEngine:
 				remaining_frames = frames - written_frames
 
 				if self._is_vamping and self._current_vamp is not None:
-					# We are inside a vamp region. Only copy
-					# samples up to the vamp's end boundary.
+					# Inside a vamp: copy up to the end boundary.
 					end_sample = self._current_vamp.end_sample(
 						self._samplerate_hz
 					)
@@ -347,10 +294,8 @@ class VampEngine:
 					)
 
 					if chunk_frames <= 0:
-						# The playhead is at or past the vamp's
-						# end boundary. Notify the behaviour,
-						# which may loop back to the start or
-						# exit the vamp.
+						# At or past the vamp end boundary.
+						# Let the behaviour decide: loop or exit.
 						context = self._make_context()
 						self._current_vamp.behaviour.on_vamp_exit(
 							self._current_vamp, context
@@ -370,9 +315,8 @@ class VampEngine:
 					written_frames += chunk_frames
 
 					if self._playhead_samples >= end_sample:
-						# We have just written up to the vamp's
-						# end boundary. Notify the behaviour so
-						# it can decide whether to loop or exit.
+						# Reached the vamp end boundary. Let the
+						# behaviour decide: loop or exit.
 						context = self._make_context()
 
 						self._current_vamp.behaviour.on_vamp_exit(
@@ -382,10 +326,8 @@ class VampEngine:
 						self._apply_context(context)
 
 				else:
-					# Normal playback outside of any vamp region.
-					# Copy samples up to either the start of the
-					# next vamp or the end of the file, whichever
-					# comes first.
+					# Normal playback: copy up to the next vamp
+					# start or end of file, whichever is first.
 					limit_samples = self._total_samples
 
 					if self._next_vamp_index < len(self._vamps):
@@ -415,9 +357,6 @@ class VampEngine:
 					self._playhead_samples += chunk_frames
 					written_frames += chunk_frames
 
-			# If the buffer was not completely filled (for example
-			# because we ran out of samples between vamp boundaries
-			# within a single callback), zero-fill the remainder
-			# to avoid outputting garbage.
+			# Zero-fill any remaining buffer space.
 			if written_frames < frames:
 				outdata[written_frames:] = 0
