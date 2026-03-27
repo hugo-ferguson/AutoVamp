@@ -1,106 +1,175 @@
+"""Command-line entry point and argument parsing for AutoVamp.
+
+Handles CLI argument parsing, TOML config loading, track and
+cue construction from user input, and validation before handing
+off to the CLI app.
+"""
+
 from __future__ import annotations
 import argparse
-import sys
+import os
 import tomllib
 from . import __version__
-from datetime import timedelta
 from .models import (
-	Vamp,
-	JumpVamp,
-	ContinueVamp,
+	Cue,
+	Track,
+	Jump,
+	Continue,
+	Repeat,
 	Safety,
 	Caesura,
-	VampBehaviour,
-	format_timestamp,
+	CueBehaviour,
 	parse_timestamp,
 )
-from .engine import VampEngine
 from .cli.app import CliApp
 
-# Maps behaviour names to their corresponding VampBehaviour
+# Maps behaviour names to their corresponding CueBehaviour
 # classes. Used when parsing both CLI arguments and TOML files.
-BEHAVIOURS: dict[str, type[VampBehaviour]] = {
-	"jump": JumpVamp,
-	"continue": ContinueVamp,
+BEHAVIOURS: dict[str, type[CueBehaviour]] = {
+	"jump": Jump,
+	"continue": Continue,
+	"repeat": Repeat,
 	"safety": Safety,
 	"caesura": Caesura,
 }
 
 
 def _error(message: str) -> None:
-	"""Print an error message and exit."""
+	"""Print an error message to stdout and exit with code 1."""
 	print(f"Error: {message}")
 	raise SystemExit(1)
 
 
-def build_vamp(raw: dict[str, str]) -> Vamp:
-	"""Build a Vamp from a dict with start, end, and behaviour keys.
+def build_cue(raw: dict[str, str]) -> Cue:
+	"""Build a Cue from a dict with start, end, and behaviour keys.
 
-	This is the shared parsing path used by both TOML config
-	files and inline --vamp CLI arguments.
+	Shared parsing path used by both TOML config files and
+	inline --cue CLI arguments. The 'end' key is optional for
+	point-in-time behaviours like caesura.
 
 	Args:
-		raw: A dict with 'start', 'end', and 'behaviour' keys.
+		raw: A dict with 'start', 'behaviour', and optionally
+			'end' keys.
 
 	Returns:
-		A validated Vamp instance.
+		A validated Cue instance.
 	"""
-	missing = {"start", "end", "behaviour"} - raw.keys()
+	missing = {"start", "behaviour"} - raw.keys()
 	if missing:
 		_error(
-			f"vamp definition missing required keys: "
+			f"cue definition missing required keys: "
 			f"{', '.join(sorted(missing))}"
-		)
-
-	start_time = parse_timestamp(raw["start"])
-	end_time = parse_timestamp(raw["end"])
-
-	if start_time >= end_time:
-		_error(
-			f"vamp start ({raw['start']}) must be "
-			f"before end ({raw['end']})"
 		)
 
 	behaviour_name = raw["behaviour"]
 	if behaviour_name not in BEHAVIOURS:
 		_error(
-			f"unknown vamp behaviour '{behaviour_name}', "
+			f"unknown cue behaviour '{behaviour_name}', "
 			f"expected one of: {', '.join(BEHAVIOURS)}"
 		)
 
-	return Vamp(
+	start_time = parse_timestamp(raw["start"])
+
+	end_time = None
+	if "end" in raw:
+		end_time = parse_timestamp(raw["end"])
+		if start_time >= end_time:
+			_error(
+				f"cue start ({raw['start']}) must be "
+				f"before end ({raw['end']})"
+			)
+	elif behaviour_name != "caesura":
+		_error(
+			f"'end' is required for behaviour "
+			f"'{behaviour_name}'"
+		)
+
+	# Build the behaviour, passing any extra options it supports.
+	kwargs: dict = {}
+	if behaviour_name == "repeat" and "repetitions" in raw:
+		try:
+			kwargs["repetitions"] = int(raw["repetitions"])
+		except ValueError:
+			_error(
+				f"'repetitions' must be an integer, "
+				f"got '{raw['repetitions']}'"
+			)
+
+	return Cue(
 		start_time=start_time,
+		behaviour=BEHAVIOURS[behaviour_name](**kwargs),
 		end_time=end_time,
-		behaviour=BEHAVIOURS[behaviour_name](),
 	)
 
 
-def load_toml(path: str) -> tuple[str, list[Vamp]]:
-	"""Load an audio file path and vamp definitions from a TOML file.
+def _resolve_path(filepath: str, toml_dir: str) -> str:
+	"""Resolve a file path relative to the TOML file's directory.
+
+	Args:
+		filepath: The path from the config file.
+		toml_dir: The directory containing the TOML file.
+
+	Returns:
+		An absolute or working-directory-relative path.
+	"""
+	if os.path.isabs(filepath):
+		return filepath
+	return os.path.join(toml_dir, filepath)
+
+
+def load_toml(path: str) -> list[Track]:
+	"""Load tracks from a TOML config file.
+
+	Supports two formats: the multi-track format with [[track]]
+	entries, and the legacy single-file format with a top-level
+	'file' key and [[cue]] entries.
 
 	Args:
 		path: Path to the TOML config file.
 
 	Returns:
-		A tuple of (audio file path, list of Vamps).
+		A list of Track instances.
 	"""
 	with open(path, "rb") as f:
 		config = tomllib.load(f)
 
+	toml_dir = os.path.dirname(path)
+
+	if "track" in config:
+		raw_tracks = config["track"]
+		if not raw_tracks:
+			_error(f"{path}: no [[track]] entries found")
+
+		tracks: list[Track] = []
+		for raw_track in raw_tracks:
+			if "file" not in raw_track:
+				_error(
+					f"{path}: [[track]] entry missing "
+					f"required 'file' key"
+				)
+
+			filepath = _resolve_path(raw_track["file"], toml_dir)
+			cues = [build_cue(c) for c in raw_track.get("cue", [])]
+			autostart = raw_track.get("autostart", False)
+			tracks.append(Track(filepath, cues, autostart))
+
+		return tracks
+
+	# Legacy single-file format.
 	if "file" not in config:
-		_error(f"{path}: missing required 'file' key")
+		_error(f"{path}: missing 'file' or [[track]] entries")
 
-	raw_vamps = config.get("vamp", [])
-	if not raw_vamps:
-		_error(f"{path}: no [[vamp]] entries found")
+	raw_cues = config.get("cue", [])
+	if not raw_cues:
+		_error(f"{path}: no [[cue]] entries found")
 
-	vamps = [build_vamp(v) for v in raw_vamps]
+	filepath = _resolve_path(config["file"], toml_dir)
+	cues = [build_cue(c) for c in raw_cues]
+	return [Track(filepath, cues)]
 
-	return config["file"], vamps
 
-
-def parse_vamp_arg(arg: str) -> dict[str, str]:
-	"""Parse a --vamp argument in key=value,key=value format.
+def parse_cue_arg(arg: str) -> dict[str, str]:
+	"""Parse a --cue argument in key=value,key=value format.
 
 	Args:
 		arg: A string like 'start=0:01:30,end=0:02:00,behaviour=jump'.
@@ -113,7 +182,7 @@ def parse_vamp_arg(arg: str) -> dict[str, str]:
 	for pair in arg.split(","):
 		if "=" not in pair:
 			_error(
-				f"invalid --vamp format: '{pair}', "
+				f"invalid --cue format: '{pair}', "
 				f"expected key=value"
 			)
 		key, _, value = pair.partition("=")
@@ -125,7 +194,7 @@ def parse_vamp_arg(arg: str) -> dict[str, str]:
 def parse_args() -> argparse.Namespace:
 	"""Parse and return command-line arguments."""
 	parser = argparse.ArgumentParser(
-		description="Audio player with vamp loops",
+		description="Audio player with cue regions",
 	)
 
 	parser.add_argument(
@@ -143,13 +212,15 @@ def parse_args() -> argparse.Namespace:
 	)
 
 	parser.add_argument(
-		"--vamp",
+		"--cue",
 		action="append",
-		dest="vamps",
+		dest="cues",
 		metavar="start=T,end=T,behaviour=TYPE",
 		help=(
-			"Define a vamp inline. Can be repeated. "
-			"Example: --vamp start=0:01:30,end=0:02:00,behaviour=jump"
+			"Define a cue inline. Can be repeated. "
+			"'end' is optional for caesura. "
+			"Example: --cue start=0:01:30,end=0:02:00,"
+			"behaviour=jump"
 		),
 	)
 
@@ -161,43 +232,28 @@ def main() -> None:
 	args = parse_args()
 
 	if args.file.endswith(".toml"):
-		# File mode: load everything from the TOML config.
-		if args.vamps:
+		if args.cues:
 			_error(
-				"--vamp flags cannot be used with a "
+				"--cue flags cannot be used with a "
 				"TOML config file"
 			)
 
-		filepath, vamps = load_toml(args.file)
+		tracks = load_toml(args.file)
 	else:
-		# Inline mode: audio file with --vamp flags.
-		filepath = args.file
-		if not args.vamps:
+		# Inline mode: single audio file with --cue flags.
+		if not args.cues:
 			_error(
-				"at least one --vamp is required when "
+				"at least one --cue is required when "
 				"using an audio file directly"
 			)
 
-		vamps = [
-			build_vamp(parse_vamp_arg(v))
-			for v in args.vamps
+		cues = [
+			build_cue(parse_cue_arg(c))
+			for c in args.cues
 		]
+		tracks = [Track(filepath=args.file, cues=cues)]
 
-	engine = VampEngine(filepath=filepath, vamps=vamps)
-
-	# Validate that no vamp extends past the end of the file.
-	duration_seconds = engine.duration_seconds
-	for vamp in vamps:
-		if vamp.end_time.total_seconds() > duration_seconds:
-			_error(
-				f"vamp end ({format_timestamp(vamp.end_time)}) "
-				f"exceeds audio duration "
-				f"({format_timestamp(
-					timedelta(seconds=duration_seconds),
-				)})"
-			)
-
-	app = CliApp(engine, filename=filepath)
+	app = CliApp(tracks)
 	app.run()
 
 
