@@ -1,28 +1,26 @@
 """Command-line entry point and argument parsing for AutoVamp.
 
-Handles CLI argument parsing, TOML config loading, cue
-construction from user input, and validation before handing
-off to the engine and CLI app.
+Handles CLI argument parsing, TOML config loading, track and
+cue construction from user input, and validation before handing
+off to the CLI app.
 """
 
 from __future__ import annotations
 import argparse
 import os
-import sys
 import tomllib
 from . import __version__
-from datetime import timedelta
 from .models import (
 	Cue,
+	Track,
 	Jump,
 	Continue,
+	Repeat,
 	Safety,
 	Caesura,
 	CueBehaviour,
-	format_timestamp,
 	parse_timestamp,
 )
-from .engine import VampEngine
 from .cli.app import CliApp
 
 # Maps behaviour names to their corresponding CueBehaviour
@@ -30,6 +28,7 @@ from .cli.app import CliApp
 BEHAVIOURS: dict[str, type[CueBehaviour]] = {
 	"jump": Jump,
 	"continue": Continue,
+	"repeat": Repeat,
 	"safety": Safety,
 	"caesura": Caesura,
 }
@@ -87,7 +86,7 @@ def build_cue(raw: dict[str, str]) -> Cue:
 
 	# Build the behaviour, passing any extra options it supports.
 	kwargs: dict = {}
-	if behaviour_name == "continue" and "repetitions" in raw:
+	if behaviour_name == "repeat" and "repetitions" in raw:
 		try:
 			kwargs["repetitions"] = int(raw["repetitions"])
 		except ValueError:
@@ -103,35 +102,70 @@ def build_cue(raw: dict[str, str]) -> Cue:
 	)
 
 
-def load_toml(path: str) -> tuple[str, list[Cue]]:
-	"""Load an audio file path and cue definitions from a TOML file.
+def _resolve_path(filepath: str, toml_dir: str) -> str:
+	"""Resolve a file path relative to the TOML file's directory.
+
+	Args:
+		filepath: The path from the config file.
+		toml_dir: The directory containing the TOML file.
+
+	Returns:
+		An absolute or working-directory-relative path.
+	"""
+	if os.path.isabs(filepath):
+		return filepath
+	return os.path.join(toml_dir, filepath)
+
+
+def load_toml(path: str) -> list[Track]:
+	"""Load tracks from a TOML config file.
+
+	Supports two formats: the multi-track format with [[track]]
+	entries, and the legacy single-file format with a top-level
+	'file' key and [[cue]] entries.
 
 	Args:
 		path: Path to the TOML config file.
 
 	Returns:
-		A tuple of (audio file path, list of Cues).
+		A list of Track instances.
 	"""
 	with open(path, "rb") as f:
 		config = tomllib.load(f)
 
+	toml_dir = os.path.dirname(path)
+
+	if "track" in config:
+		raw_tracks = config["track"]
+		if not raw_tracks:
+			_error(f"{path}: no [[track]] entries found")
+
+		tracks: list[Track] = []
+		for raw_track in raw_tracks:
+			if "file" not in raw_track:
+				_error(
+					f"{path}: [[track]] entry missing "
+					f"required 'file' key"
+				)
+
+			filepath = _resolve_path(raw_track["file"], toml_dir)
+			cues = [build_cue(c) for c in raw_track.get("cue", [])]
+			autostart = raw_track.get("autostart", False)
+			tracks.append(Track(filepath, cues, autostart))
+
+		return tracks
+
+	# Legacy single-file format.
 	if "file" not in config:
-		_error(f"{path}: missing required 'file' key")
+		_error(f"{path}: missing 'file' or [[track]] entries")
 
 	raw_cues = config.get("cue", [])
 	if not raw_cues:
 		_error(f"{path}: no [[cue]] entries found")
 
+	filepath = _resolve_path(config["file"], toml_dir)
 	cues = [build_cue(c) for c in raw_cues]
-
-	# Resolve the audio file path relative to the TOML file's
-	# directory, so that "file = song.wav" works regardless of
-	# the user's working directory.
-	filepath = config["file"]
-	if not os.path.isabs(filepath):
-		filepath = os.path.join(os.path.dirname(path), filepath)
-
-	return filepath, cues
+	return [Track(filepath, cues)]
 
 
 def parse_cue_arg(arg: str) -> dict[str, str]:
@@ -198,17 +232,15 @@ def main() -> None:
 	args = parse_args()
 
 	if args.file.endswith(".toml"):
-		# File mode: load everything from the TOML config.
 		if args.cues:
 			_error(
 				"--cue flags cannot be used with a "
 				"TOML config file"
 			)
 
-		filepath, cues = load_toml(args.file)
+		tracks = load_toml(args.file)
 	else:
-		# Inline mode: audio file with --cue flags.
-		filepath = args.file
+		# Inline mode: single audio file with --cue flags.
 		if not args.cues:
 			_error(
 				"at least one --cue is required when "
@@ -219,23 +251,9 @@ def main() -> None:
 			build_cue(parse_cue_arg(c))
 			for c in args.cues
 		]
+		tracks = [Track(filepath=args.file, cues=cues)]
 
-	engine = VampEngine(filepath=filepath, cues=cues)
-
-	# Validate that no cue extends past the end of the file.
-	duration_seconds = engine.duration_seconds
-	for cue in cues:
-		check_time = cue.end_time or cue.start_time
-		if check_time.total_seconds() > duration_seconds:
-			_error(
-				f"cue at {format_timestamp(check_time)} "
-				f"exceeds audio duration "
-				f"({format_timestamp(
-					timedelta(seconds=duration_seconds),
-				)})"
-			)
-
-	app = CliApp(engine, filename=filepath)
+	app = CliApp(tracks)
 	app.run()
 
 

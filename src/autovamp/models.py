@@ -197,21 +197,14 @@ class Jump(CueBehaviour):
 
 
 class Continue(CueBehaviour):
-	"""Vamps a region, finishing the current iteration before exiting.
+	"""Vamps a region indefinitely until the user exits.
 
-	If repetitions is set, the cue loops that many times then
-	exits automatically. Pressing ENTER queues one more loop.
-	If repetitions is not set, the cue loops indefinitely until
-	ENTER is pressed, then exits after the current iteration.
-
-	Args:
-		repetitions: Number of times to loop before exiting.
-			If None, loops indefinitely until exit is requested.
+	Loops back to the start each time the end is reached.
+	When the user presses ENTER, the current iteration
+	finishes before playback continues past the cue.
 	"""
 
-	def __init__(self, repetitions: int | None = None) -> None:
-		self._repetitions: int | None = repetitions
-		self._remaining: int = 0
+	def __init__(self) -> None:
 		self._exit_requested: bool = False
 
 	def __str__(self) -> str:
@@ -221,39 +214,66 @@ class Continue(CueBehaviour):
 	def colour(self) -> str:
 		return _GREEN
 
-	def on_cue_entry(self, cue: Cue, context: PlaybackContext, ) -> None:
+	def on_cue_entry(self, cue: Cue, context: PlaybackContext) -> None:
 		self._exit_requested = False
-		if self._repetitions is not None:
-			self._remaining = self._repetitions
 
 	@property
 	def status_message(self) -> str | None:
-		if self._repetitions is not None:
-			if self._remaining > 0:
-				return f"VAMPING ({self._remaining} remaining)"
-			return "EXITING VAMP"
 		if self._exit_requested:
 			return "EXITING VAMP"
 		return None
 
-	def on_exit_requested(self, cue: Cue, context: PlaybackContext, ) -> None:
-		if self._repetitions is not None:
-			self._remaining += 1
-		else:
-			self._exit_requested = True
+	def on_exit_requested(self, cue: Cue, context: PlaybackContext) -> None:
+		self._exit_requested = True
 
-	def on_cue_exit(self, cue: Cue, context: PlaybackContext, ) -> None:
-		if self._repetitions is not None:
-			if self._remaining > 0:
-				self._remaining -= 1
-				context.position_samples = cue.start_sample(context.samplerate_hz)
-			else:
-				context.in_cue = False
-		elif self._exit_requested:
+	def on_cue_exit(self, cue: Cue, context: PlaybackContext) -> None:
+		if self._exit_requested:
 			context.in_cue = False
 			self._exit_requested = False
 		else:
 			context.position_samples = cue.start_sample(context.samplerate_hz)
+
+
+class Repeat(CueBehaviour):
+	"""Vamps a region a set number of times then exits.
+
+	Loops the cue region for the configured number of
+	repetitions, then continues past it. Each press of
+	ENTER during the cue queues one additional loop.
+
+	Args:
+		repetitions: Number of times to loop before exiting.
+	"""
+
+	def __init__(self, repetitions: int = 1) -> None:
+		self._repetitions: int = repetitions
+		self._remaining: int = 0
+
+	def __str__(self) -> str:
+		return "Repeat"
+
+	@property
+	def colour(self) -> str:
+		return _GREEN
+
+	def on_cue_entry(self, cue: Cue, context: PlaybackContext) -> None:
+		self._remaining = self._repetitions
+
+	@property
+	def status_message(self) -> str | None:
+		if self._remaining > 0:
+			return f"VAMPING ({self._remaining} remaining)"
+		return "EXITING VAMP"
+
+	def on_exit_requested(self, cue: Cue, context: PlaybackContext) -> None:
+		self._remaining += 1
+
+	def on_cue_exit(self, cue: Cue, context: PlaybackContext) -> None:
+		if self._remaining > 0:
+			self._remaining -= 1
+			context.position_samples = cue.start_sample(context.samplerate_hz)
+		else:
+			context.in_cue = False
 
 
 class Safety(CueBehaviour):
@@ -365,3 +385,21 @@ class Cue:
 		"""
 		t = self.end_time if self.end_time is not None else self.start_time
 		return int(t.total_seconds() * samplerate_hz)
+
+
+@dataclass
+class Track:
+	"""An audio file and its associated cues.
+
+	Args:
+		filepath: Path to the audio file.
+		cues: List of cues for this track. May be empty if the
+			track has no cues and just plays straight through.
+		autostart: If True, playback begins immediately after
+			the previous track ends. If False (the default),
+			the app pauses and waits for user input.
+	"""
+
+	filepath: str
+	cues: list[Cue]
+	autostart: bool = False

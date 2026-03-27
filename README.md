@@ -20,10 +20,11 @@ playback:
 
 - `jump`: loops the region until you press ENTER, then
   immediately jumps past it.
-- `continue`: loops the region. On ENTER, finishes the current
-  iteration before moving on. Supports an optional `repetitions`
-  count to loop a set number of times before exiting
-  automatically. Pressing ENTER adds one more loop.
+- `continue`: loops the region indefinitely. On ENTER, finishes
+  the current iteration before moving on.
+- `repeat`: loops the region a set number of times, then exits.
+  Requires a `repetitions` count. Pressing ENTER during playback
+  queues one additional loop.
 - `safety`: plays through the region once and exits by default.
   Press ENTER to queue additional loops before it ends.
 - `caesura`: pauses playback at the marked point, like a fermata
@@ -75,7 +76,36 @@ Create a `.toml` file and pass it as the only argument:
 autovamp show.toml
 ```
 
-The TOML file format:
+#### Multi-track format
+
+A config file can define multiple tracks. After each track
+finishes, playback pauses until you press SPACE. Set
+`autostart = true` on a track to have it begin immediately
+after the previous one ends.
+
+```toml
+[[track]]
+file = "overture.mp3"
+
+[[track.cue]]
+start = "0:01:30"
+end = "0:02:00"
+behaviour = "jump"
+
+[[track]]
+file = "act_one.mp3"
+autostart = true
+
+[[track.cue]]
+start = "0:03:00"
+end = "0:03:30"
+behaviour = "repeat"
+repetitions = 3
+```
+
+#### Single-track format
+
+A simpler format for a single file with cues:
 
 ```toml
 file = "song.mp3"
@@ -88,7 +118,7 @@ behaviour = "jump"
 [[cue]]
 start = "0:03:00"
 end = "0:03:30"
-behaviour = "continue"
+behaviour = "repeat"
 repetitions = 3
 ```
 
