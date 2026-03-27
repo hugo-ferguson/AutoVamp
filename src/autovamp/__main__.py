@@ -1,7 +1,7 @@
 """Command-line entry point and argument parsing for AutoVamp.
 
-This module handles CLI argument parsing, TOML config loading,
-vamp construction from user input, and validation before handing
+Handles CLI argument parsing, TOML config loading, cue
+construction from user input, and validation before handing
 off to the engine and CLI app.
 """
 
@@ -13,23 +13,23 @@ import tomllib
 from . import __version__
 from datetime import timedelta
 from .models import (
-	Vamp,
-	JumpVamp,
-	ContinueVamp,
+	Cue,
+	Jump,
+	Continue,
 	Safety,
 	Caesura,
-	VampBehaviour,
+	CueBehaviour,
 	format_timestamp,
 	parse_timestamp,
 )
 from .engine import VampEngine
 from .cli.app import CliApp
 
-# Maps behaviour names to their corresponding VampBehaviour
+# Maps behaviour names to their corresponding CueBehaviour
 # classes. Used when parsing both CLI arguments and TOML files.
-BEHAVIOURS: dict[str, type[VampBehaviour]] = {
-	"jump": JumpVamp,
-	"continue": ContinueVamp,
+BEHAVIOURS: dict[str, type[CueBehaviour]] = {
+	"jump": Jump,
+	"continue": Continue,
 	"safety": Safety,
 	"caesura": Caesura,
 }
@@ -41,32 +41,31 @@ def _error(message: str) -> None:
 	raise SystemExit(1)
 
 
-def build_vamp(raw: dict[str, str]) -> Vamp:
-	"""Build a Vamp from a dict with start, end, and
-	behaviour keys.
+def build_cue(raw: dict[str, str]) -> Cue:
+	"""Build a Cue from a dict with start, end, and behaviour keys.
 
-	This is the shared parsing path used by both TOML config
-	files and inline --vamp CLI arguments. The 'end' key is
-	optional for point-in-time behaviours like caesura.
+	Shared parsing path used by both TOML config files and
+	inline --cue CLI arguments. The 'end' key is optional for
+	point-in-time behaviours like caesura.
 
 	Args:
 		raw: A dict with 'start', 'behaviour', and optionally
 			'end' keys.
 
 	Returns:
-		A validated Vamp instance.
+		A validated Cue instance.
 	"""
 	missing = {"start", "behaviour"} - raw.keys()
 	if missing:
 		_error(
-			f"vamp definition missing required keys: "
+			f"cue definition missing required keys: "
 			f"{', '.join(sorted(missing))}"
 		)
 
 	behaviour_name = raw["behaviour"]
 	if behaviour_name not in BEHAVIOURS:
 		_error(
-			f"unknown vamp behaviour '{behaviour_name}', "
+			f"unknown cue behaviour '{behaviour_name}', "
 			f"expected one of: {', '.join(BEHAVIOURS)}"
 		)
 
@@ -77,7 +76,7 @@ def build_vamp(raw: dict[str, str]) -> Vamp:
 		end_time = parse_timestamp(raw["end"])
 		if start_time >= end_time:
 			_error(
-				f"vamp start ({raw['start']}) must be "
+				f"cue start ({raw['start']}) must be "
 				f"before end ({raw['end']})"
 			)
 	elif behaviour_name != "caesura":
@@ -86,21 +85,32 @@ def build_vamp(raw: dict[str, str]) -> Vamp:
 			f"'{behaviour_name}'"
 		)
 
-	return Vamp(
+	# Build the behaviour, passing any extra options it supports.
+	kwargs: dict = {}
+	if behaviour_name == "continue" and "repetitions" in raw:
+		try:
+			kwargs["repetitions"] = int(raw["repetitions"])
+		except ValueError:
+			_error(
+				f"'repetitions' must be an integer, "
+				f"got '{raw['repetitions']}'"
+			)
+
+	return Cue(
 		start_time=start_time,
-		behaviour=BEHAVIOURS[behaviour_name](),
+		behaviour=BEHAVIOURS[behaviour_name](**kwargs),
 		end_time=end_time,
 	)
 
 
-def load_toml(path: str) -> tuple[str, list[Vamp]]:
-	"""Load an audio file path and vamp definitions from a TOML file.
+def load_toml(path: str) -> tuple[str, list[Cue]]:
+	"""Load an audio file path and cue definitions from a TOML file.
 
 	Args:
 		path: Path to the TOML config file.
 
 	Returns:
-		A tuple of (audio file path, list of Vamps).
+		A tuple of (audio file path, list of Cues).
 	"""
 	with open(path, "rb") as f:
 		config = tomllib.load(f)
@@ -108,11 +118,11 @@ def load_toml(path: str) -> tuple[str, list[Vamp]]:
 	if "file" not in config:
 		_error(f"{path}: missing required 'file' key")
 
-	raw_vamps = config.get("vamp", [])
-	if not raw_vamps:
-		_error(f"{path}: no [[vamp]] entries found")
+	raw_cues = config.get("cue", [])
+	if not raw_cues:
+		_error(f"{path}: no [[cue]] entries found")
 
-	vamps = [build_vamp(v) for v in raw_vamps]
+	cues = [build_cue(c) for c in raw_cues]
 
 	# Resolve the audio file path relative to the TOML file's
 	# directory, so that "file = song.wav" works regardless of
@@ -121,11 +131,11 @@ def load_toml(path: str) -> tuple[str, list[Vamp]]:
 	if not os.path.isabs(filepath):
 		filepath = os.path.join(os.path.dirname(path), filepath)
 
-	return filepath, vamps
+	return filepath, cues
 
 
-def parse_vamp_arg(arg: str) -> dict[str, str]:
-	"""Parse a --vamp argument in key=value,key=value format.
+def parse_cue_arg(arg: str) -> dict[str, str]:
+	"""Parse a --cue argument in key=value,key=value format.
 
 	Args:
 		arg: A string like 'start=0:01:30,end=0:02:00,behaviour=jump'.
@@ -138,7 +148,7 @@ def parse_vamp_arg(arg: str) -> dict[str, str]:
 	for pair in arg.split(","):
 		if "=" not in pair:
 			_error(
-				f"invalid --vamp format: '{pair}', "
+				f"invalid --cue format: '{pair}', "
 				f"expected key=value"
 			)
 		key, _, value = pair.partition("=")
@@ -150,7 +160,7 @@ def parse_vamp_arg(arg: str) -> dict[str, str]:
 def parse_args() -> argparse.Namespace:
 	"""Parse and return command-line arguments."""
 	parser = argparse.ArgumentParser(
-		description="Audio player with vamp loops",
+		description="Audio player with cue regions",
 	)
 
 	parser.add_argument(
@@ -168,14 +178,14 @@ def parse_args() -> argparse.Namespace:
 	)
 
 	parser.add_argument(
-		"--vamp",
+		"--cue",
 		action="append",
-		dest="vamps",
+		dest="cues",
 		metavar="start=T,end=T,behaviour=TYPE",
 		help=(
-			"Define a vamp inline. Can be repeated. "
+			"Define a cue inline. Can be repeated. "
 			"'end' is optional for caesura. "
-			"Example: --vamp start=0:01:30,end=0:02:00,"
+			"Example: --cue start=0:01:30,end=0:02:00,"
 			"behaviour=jump"
 		),
 	)
@@ -189,36 +199,36 @@ def main() -> None:
 
 	if args.file.endswith(".toml"):
 		# File mode: load everything from the TOML config.
-		if args.vamps:
+		if args.cues:
 			_error(
-				"--vamp flags cannot be used with a "
+				"--cue flags cannot be used with a "
 				"TOML config file"
 			)
 
-		filepath, vamps = load_toml(args.file)
+		filepath, cues = load_toml(args.file)
 	else:
-		# Inline mode: audio file with --vamp flags.
+		# Inline mode: audio file with --cue flags.
 		filepath = args.file
-		if not args.vamps:
+		if not args.cues:
 			_error(
-				"at least one --vamp is required when "
+				"at least one --cue is required when "
 				"using an audio file directly"
 			)
 
-		vamps = [
-			build_vamp(parse_vamp_arg(v))
-			for v in args.vamps
+		cues = [
+			build_cue(parse_cue_arg(c))
+			for c in args.cues
 		]
 
-	engine = VampEngine(filepath=filepath, vamps=vamps)
+	engine = VampEngine(filepath=filepath, cues=cues)
 
-	# Validate that no vamp extends past the end of the file.
+	# Validate that no cue extends past the end of the file.
 	duration_seconds = engine.duration_seconds
-	for vamp in vamps:
-		check_time = vamp.end_time or vamp.start_time
+	for cue in cues:
+		check_time = cue.end_time or cue.start_time
 		if check_time.total_seconds() > duration_seconds:
 			_error(
-				f"vamp at {format_timestamp(check_time)} "
+				f"cue at {format_timestamp(check_time)} "
 				f"exceeds audio duration "
 				f"({format_timestamp(
 					timedelta(seconds=duration_seconds),

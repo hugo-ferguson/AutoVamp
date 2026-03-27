@@ -1,27 +1,33 @@
 # AutoVamp
 
-A command-line audio player with interactive vamp loops. Define a
-region in an audio file that loops until you choose to move on.
-Useful for practising, rehearsing, or performing with backing
-tracks.
+A command-line audio player with interactive cues. Mark points
+and regions in an audio file that pause, loop, or jump during
+playback. Useful for practising, rehearsing, or performing with
+backing tracks.
 
-## What is a vamp?
+## What are cues?
 
-In music, a vamp is a repeating section that loops until a cue is
-given to continue. AutoVamp lets you define vamp regions in any
-audio file and choose how the transition out of the loop behaves.
+A cue is a marked point or region in the audio where something
+happens during playback. Some cues vamp (loop a section until
+you choose to move on), while others pause or skip ahead. The
+name AutoVamp comes from the musical term: a vamp is a repeating
+passage that loops until a cue is given to continue.
 
 ## Behaviours
 
-Each vamp has a behaviour that controls what happens when you
-press `SPACE` to exit the loop:
+Each cue has a behaviour that controls what happens during
+playback:
 
-- `jump`: immediately jumps past the vamp region.
-- `continue`: finishes the current iteration, then moves on.
-- `safety`: exits the vamp at the end of the current loop by
-  default. Press SPACE to add extra loops before exiting.
-- `caesura`: pauses playback when the vamp region is reached.
-  Press SPACE to resume.
+- `jump`: loops the region until you press ENTER, then
+  immediately jumps past it.
+- `continue`: loops the region. On ENTER, finishes the current
+  iteration before moving on. Supports an optional `repetitions`
+  count to loop a set number of times before exiting
+  automatically. Pressing ENTER adds one more loop.
+- `safety`: plays through the region once and exits by default.
+  Press ENTER to queue additional loops before it ends.
+- `caesura`: pauses playback at the marked point, like a fermata
+  or a conductor's hold. Press ENTER to resume.
 
 ## Installation
 
@@ -52,13 +58,13 @@ page in settings.
 
 ### Inline mode
 
-Define vamps directly on the command line. Each `--vamp` takes
+Define cues directly on the command line. Each `--cue` takes
 a comma-separated list of `key=value` pairs:
 
 ```
 autovamp song.mp3 \
-    --vamp start=0:01:30,end=0:02:00,behaviour=jump \
-    --vamp start=0:03:00,end=0:03:30,behaviour=safety
+    --cue start=0:01:30,end=0:02:00,behaviour=jump \
+    --cue start=0:03:00,end=0:03:30,behaviour=safety
 ```
 
 ### Config file mode
@@ -74,15 +80,16 @@ The TOML file format:
 ```toml
 file = "song.mp3"
 
-[[vamp]]
+[[cue]]
 start = "0:01:30"
 end = "0:02:00"
 behaviour = "jump"
 
-[[vamp]]
+[[cue]]
 start = "0:03:00"
 end = "0:03:30"
-behaviour = "safety"
+behaviour = "continue"
+repetitions = 3
 ```
 
 Timestamps use `HH:MM:SS` format, with an optional `.mmm`
@@ -93,12 +100,13 @@ millisecond suffix (e.g. `0:01:30.5` for 1 minute 30.5 seconds).
 | Argument    | Description                                     |
 |-------------|-------------------------------------------------|
 | `file`      | Audio file (wav, flac, ogg, mp3) or TOML config |
-| `--vamp`    | Inline vamp definition (repeatable)             |
+| `--cue`     | Inline cue definition (repeatable)              |
 | `--version` | Show version and exit                           |
 
 ### Controls
 
-- **SPACE**: exit the current vamp (`behaviour` determines how)
+- **ENTER**: exit the current cue (`behaviour` determines how)
+- **SPACE**: play/pause
 - **Q**: quit
 
 ## License

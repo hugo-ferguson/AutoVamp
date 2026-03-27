@@ -41,7 +41,7 @@ PAD_Y = "\n"
 # still dispatched. Action is a name or "seek:<seconds>".
 KEY_BINDINGS: list[tuple[tuple[bytes, ...], str, str, str]] = [
 	((b" ",), "SPACE", "play/pause", "play_pause"),
-	((b"\r", b"\n"), "ENTER", "exit vamp", "exit_vamp"),
+	((b"\r", b"\n"), "ENTER", "exit cue", "exit_cue"),
 	((b"q",), "Q", "quit", "quit"),
 	((b"\x1b[D",), "\u2190/\u2192", "\u00b15s", "seek:-5"),
 	((b"\x1b[C",), "", "", "seek:5"),
@@ -54,11 +54,11 @@ KEY_BINDINGS: list[tuple[tuple[bytes, ...], str, str, str]] = [
 
 
 class CliApp:
-	"""Terminal interface for audio playback with vamp loops.
+	"""Terminal interface for audio playback with cues.
 
-	Renders a live status line with progress bar and vamp state,
+	Renders a live status line with progress bar and cue state,
 	and handles keyboard input. Reads from a VampEngine which
-	manages the actual audio playback and vamp logic.
+	manages the actual audio playback and cue logic.
 	"""
 
 	def __init__(
@@ -68,7 +68,7 @@ class CliApp:
 
 		Args:
 			engine: The VampEngine that handles audio playback
-				and vamp behaviour.
+				and cue behaviour.
 			filename: Path to the audio file, shown in the
 				header. If empty, the file label is omitted.
 		"""
@@ -79,8 +79,8 @@ class CliApp:
 		# Terminal lines occupied by the previous render,
 		# used to move the cursor back before overwriting.
 		self._rendered_lines: int = 0
-		self._vamp_char_colours: dict[int, str] = (
-			self._precompute_vamp_colours()
+		self._cue_char_colours: dict[int, str] = (
+			self._precompute_cue_colours()
 		)
 
 	def run(self) -> None:
@@ -101,7 +101,7 @@ class CliApp:
 		print(f"{PAD_Y}{PAD_X}{GREEN}{BOLD}Done.{RESET}{PAD_Y}")
 
 	def _print_header(self) -> None:
-		"""Print the header: title, file metadata, vamp list,
+		"""Print the header: title, file metadata, cue list,
 		and keyboard controls."""
 		title = f"{BOLD}{CYAN}AutoVamp{RESET} {DIM}(v{__version__}){RESET}"
 		sep = f"{PAD_X}{'─' * UI_WIDTH_CHARS}"
@@ -131,16 +131,16 @@ class CliApp:
 		print(rate_label)
 		print(sep)
 
-		vamps = self._engine.vamps
+		cues = self._engine.cues
 
-		for i, vamp in enumerate(vamps, 1):
-			colour = vamp.behaviour.colour
-			name = str(vamp.behaviour)
-			start = format_timestamp(vamp.start_time)
+		for i, cue in enumerate(cues, 1):
+			colour = cue.behaviour.colour
+			name = str(cue.behaviour)
+			start = format_timestamp(cue.start_time)
 			left = f"({i}) {name}"
 
-			if vamp.end_time is not None:
-				end = format_timestamp(vamp.end_time)
+			if cue.end_time is not None:
+				end = format_timestamp(cue.end_time)
 				right = f"{start}\u2013{end}"
 			else:
 				right = start
@@ -190,8 +190,8 @@ class CliApp:
 				return True
 			elif action == "play_pause":
 				self._engine.toggle_pause()
-			elif action == "exit_vamp":
-				self._engine.exit_current_vamp()
+			elif action == "exit_cue":
+				self._engine.exit_current_cue()
 			elif action == "quit":
 				self._engine.stop()
 				return False
@@ -248,10 +248,10 @@ class CliApp:
 
 		self._key_thread.start()
 
-	def _precompute_vamp_colours(self) -> dict[int, str]:
+	def _precompute_cue_colours(self) -> dict[int, str]:
 		"""Map each progress bar character position to a colour.
 
-		Positions outside any vamp region are not included;
+		Positions outside any cue region are not included;
 		callers should default to CYAN.
 
 		Returns:
@@ -264,17 +264,17 @@ class CliApp:
 
 		pos_colours: dict[int, str] = {}
 
-		for vamp in self._engine.vamps:
-			colour = vamp.behaviour.colour
-			vamp_start_frac = (vamp.start_time.total_seconds() / duration)
+		for cue in self._engine.cues:
+			colour = cue.behaviour.colour
+			cue_start_frac = (cue.start_time.total_seconds() / duration)
 
-			if vamp.end_time is not None:
-				vamp_end_frac = (vamp.end_time.total_seconds() / duration)
+			if cue.end_time is not None:
+				cue_end_frac = (cue.end_time.total_seconds() / duration)
 			else:
-				vamp_end_frac = vamp_start_frac
+				cue_end_frac = cue_start_frac
 
-			char_start = int(vamp_start_frac * UI_WIDTH_CHARS)
-			char_end = max(char_start, int(vamp_end_frac * UI_WIDTH_CHARS))
+			char_start = int(cue_start_frac * UI_WIDTH_CHARS)
+			char_end = max(char_start, int(cue_end_frac * UI_WIDTH_CHARS))
 
 			for i in range(char_start, char_end + 1):
 				if 0 <= i < UI_WIDTH_CHARS:
@@ -285,7 +285,7 @@ class CliApp:
 	def _build_progress_bar(self, fraction: float, ) -> str:
 		"""Build a coloured text progress bar.
 
-		Each character maps to a time range. Vamp regions use
+		Each character maps to a time range. Cue regions use
 		their behaviour's colour; other positions use cyan. The
 		played portion is filled blocks, the rest dimmed shading.
 
@@ -309,7 +309,7 @@ class CliApp:
 
 		for i in range(UI_WIDTH_CHARS):
 			is_filled = i < filled_pos
-			colour = self._vamp_char_colours.get(i, CYAN)
+			colour = self._cue_char_colours.get(i, CYAN)
 			if is_filled:
 				code = colour
 				char = "█"
@@ -355,36 +355,36 @@ class CliApp:
 
 			progress_bar = self._build_progress_bar(progress_fraction)
 
-			# Show vamp region timestamps while vamping.
-			vamp_indicator = ""
-			vamp_colour = CYAN
+			# Show cue region timestamps while inside a cue.
+			cue_indicator = ""
+			cue_colour = CYAN
 
-			if state.is_vamping and state.current_vamp is not None:
-				vamp_colour = state.current_vamp.behaviour.colour
-				vamp_start_str = format_timestamp(
-					state.current_vamp.start_time,
+			if state.in_cue and state.current_cue is not None:
+				cue_colour = state.current_cue.behaviour.colour
+				cue_start_str = format_timestamp(
+					state.current_cue.start_time,
 				)
 
-				if state.current_vamp.end_time is not None:
-					vamp_end_str = format_timestamp(
-						state.current_vamp.end_time,
+				if state.current_cue.end_time is not None:
+					cue_end_str = format_timestamp(
+						state.current_cue.end_time,
 					)
-					vamp_range = (
-						f"{vamp_start_str}"
-						f"\u2013{vamp_end_str}"
+					cue_range = (
+						f"{cue_start_str}"
+						f"\u2013{cue_end_str}"
 					)
 				else:
-					vamp_range = vamp_start_str
+					cue_range = cue_start_str
 
-				active_msg = state.current_vamp.behaviour.active_message
-				vamp_indicator = (
-					f"  {vamp_colour}{BOLD}{active_msg}{RESET}"
-					f" {DIM}{vamp_range}{RESET}"
+				active_msg = state.current_cue.behaviour.active_message
+				cue_indicator = (
+					f"  {cue_colour}{BOLD}{active_msg}{RESET}"
+					f" {DIM}{cue_range}{RESET}"
 				)
 
 			status_message = None
-			if state.current_vamp is not None and state.is_vamping:
-				status_message = state.current_vamp.behaviour.status_message
+			if state.current_cue is not None and state.in_cue:
+				status_message = state.current_cue.behaviour.status_message
 
 			time_display = (
 				f"{BOLD}{position_str}{RESET}"
@@ -393,10 +393,10 @@ class CliApp:
 
 			lines = [
 				f"{PAD_X}{progress_bar}  {time_display}"
-				f"{vamp_indicator}",
+				f"{cue_indicator}",
 			]
 			if status_message is not None:
-				second_line = f"{PAD_X}{vamp_colour}{status_message}{RESET}"
+				second_line = f"{PAD_X}{cue_colour}{status_message}{RESET}"
 			else:
 				second_line = ""
 

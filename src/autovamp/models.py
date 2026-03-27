@@ -1,4 +1,9 @@
-"""Data models, timestamp utilities, and vamp behaviour definitions."""
+"""Data models, timestamp utilities, and cue behaviour definitions.
+
+Cues are timed regions in an audio file that trigger specific
+behaviours during playback. Some cues vamp (loop repeatedly),
+while others pause or jump past the region.
+"""
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
@@ -69,7 +74,7 @@ def format_timestamp(td: timedelta) -> str:
 
 @dataclass
 class PlaybackContext:
-	"""Mutable playback state snapshot passed to vamp behaviours.
+	"""Mutable playback state snapshot passed to cue behaviours.
 
 	The engine creates this from its internal state, passes it
 	to a behaviour method, and applies any changes back. This
@@ -77,7 +82,7 @@ class PlaybackContext:
 	"""
 
 	position_samples: int
-	is_vamping: bool
+	in_cue: bool
 	is_paused: bool
 	samplerate_hz: int
 
@@ -91,10 +96,10 @@ class PlaybackState:
 	"""
 
 	position_samples: int
-	is_vamping: bool
+	in_cue: bool
 	is_paused: bool
 	is_playing: bool
-	current_vamp: Vamp | None
+	current_cue: Cue | None
 
 
 _MAGENTA = "\033[35m"
@@ -103,12 +108,12 @@ _YELLOW = "\033[33m"
 _GREEN = "\033[32m"
 
 
-class VampBehaviour(ABC):
-	"""Base class for vamp behaviours.
+class CueBehaviour(ABC):
+	"""Base class for cue behaviours.
 
-	Defines what happens when the playhead enters a vamp region,
+	Defines what happens when the playhead enters a cue region,
 	when the user requests an exit, and when the playhead reaches
-	the vamp's end boundary.
+	the cue's end boundary.
 	"""
 
 	@abstractmethod
@@ -123,7 +128,7 @@ class VampBehaviour(ABC):
 
 	@property
 	def active_message(self) -> str:
-		"""Label shown in the status line while the vamp is
+		"""Label shown in the status line while the cue is
 		active. Defaults to 'VAMPING'."""
 		return "VAMPING"
 
@@ -134,41 +139,41 @@ class VampBehaviour(ABC):
 		return None
 
 	@abstractmethod
-	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext, ) -> None:
-		"""Called when the playhead first enters the vamp region.
+	def on_cue_entry(self, cue: Cue, context: PlaybackContext, ) -> None:
+		"""Called when the playhead first enters the cue region.
 
 		Args:
-			vamp: The vamp whose region has been entered.
+			cue: The cue whose region has been entered.
 			context: Mutable playback context. Changes are
 				applied back to the engine.
 		"""
 		...
 
 	@abstractmethod
-	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext) -> None:
-		"""Called when the user requests to exit the vamp.
+	def on_exit_requested(self, cue: Cue, context: PlaybackContext) -> None:
+		"""Called when the user requests to exit the cue.
 
 		Args:
-			vamp: The vamp the user wants to exit.
+			cue: The cue the user wants to exit.
 			context: Mutable playback context. Changes are
 				applied back to the engine.
 		"""
 		...
 
 	@abstractmethod
-	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext) -> None:
-		"""Called when the playhead reaches the end of the vamp.
+	def on_cue_exit(self, cue: Cue, context: PlaybackContext) -> None:
+		"""Called when the playhead reaches the end of the cue.
 
 		Args:
-			vamp: The vamp whose end boundary was reached.
+			cue: The cue whose end boundary was reached.
 			context: Mutable playback context. Changes are
 				applied back to the engine.
 		"""
 		...
 
 
-class JumpVamp(VampBehaviour):
-	"""Jumps past the vamp immediately on exit request.
+class Jump(CueBehaviour):
+	"""Jumps past the cue immediately on exit request.
 	Loops back to the start if the end is reached naturally."""
 
 	def __str__(self) -> str:
@@ -178,27 +183,35 @@ class JumpVamp(VampBehaviour):
 	def colour(self) -> str:
 		return _YELLOW
 
-	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext) -> None:
+	def on_cue_entry(self, cue: Cue, context: PlaybackContext) -> None:
 		pass
 
-	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext) -> None:
-		# Jump past the vamp region.
-		context.position_samples = vamp.end_sample(context.samplerate_hz)
-		context.is_vamping = False
+	def on_exit_requested(self, cue: Cue, context: PlaybackContext) -> None:
+		# Jump past the cue region.
+		context.position_samples = cue.end_sample(context.samplerate_hz)
+		context.in_cue = False
 
-	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext) -> None:
+	def on_cue_exit(self, cue: Cue, context: PlaybackContext) -> None:
 		# No exit request, so loop back.
-		context.position_samples = vamp.start_sample(context.samplerate_hz)
+		context.position_samples = cue.start_sample(context.samplerate_hz)
 
 
-class ContinueVamp(VampBehaviour):
-	"""Finishes the current loop iteration before exiting.
+class Continue(CueBehaviour):
+	"""Vamps a region, finishing the current iteration before exiting.
 
-	On exit request, sets a flag so the vamp exits at the end
-	of the current iteration rather than looping back.
+	If repetitions is set, the cue loops that many times then
+	exits automatically. Pressing ENTER queues one more loop.
+	If repetitions is not set, the cue loops indefinitely until
+	ENTER is pressed, then exits after the current iteration.
+
+	Args:
+		repetitions: Number of times to loop before exiting.
+			If None, loops indefinitely until exit is requested.
 	"""
 
-	def __init__(self) -> None:
+	def __init__(self, repetitions: int | None = None) -> None:
+		self._repetitions: int | None = repetitions
+		self._remaining: int = 0
 		self._exit_requested: bool = False
 
 	def __str__(self) -> str:
@@ -208,31 +221,46 @@ class ContinueVamp(VampBehaviour):
 	def colour(self) -> str:
 		return _GREEN
 
-	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext, ) -> None:
-		pass
+	def on_cue_entry(self, cue: Cue, context: PlaybackContext, ) -> None:
+		self._exit_requested = False
+		if self._repetitions is not None:
+			self._remaining = self._repetitions
 
 	@property
 	def status_message(self) -> str | None:
+		if self._repetitions is not None:
+			if self._remaining > 0:
+				return f"VAMPING ({self._remaining} remaining)"
+			return "EXITING VAMP"
 		if self._exit_requested:
 			return "EXITING VAMP"
 		return None
 
-	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext, ) -> None:
-		self._exit_requested = True
+	def on_exit_requested(self, cue: Cue, context: PlaybackContext, ) -> None:
+		if self._repetitions is not None:
+			self._remaining += 1
+		else:
+			self._exit_requested = True
 
-	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext, ) -> None:
-		if self._exit_requested:
-			context.is_vamping = False
+	def on_cue_exit(self, cue: Cue, context: PlaybackContext, ) -> None:
+		if self._repetitions is not None:
+			if self._remaining > 0:
+				self._remaining -= 1
+				context.position_samples = cue.start_sample(context.samplerate_hz)
+			else:
+				context.in_cue = False
+		elif self._exit_requested:
+			context.in_cue = False
 			self._exit_requested = False
 		else:
-			context.position_samples = vamp.start_sample(context.samplerate_hz)
+			context.position_samples = cue.start_sample(context.samplerate_hz)
 
 
-class Safety(VampBehaviour):
+class Safety(CueBehaviour):
 	"""Exits automatically unless the user requests more loops.
 
-	Playback continues past the vamp by default. Each press of
-	ENTER during the vamp queues one additional loop iteration.
+	Playback continues past the cue by default. Each press of
+	ENTER during the cue queues one additional loop iteration.
 	"""
 
 	def __init__(self) -> None:
@@ -255,27 +283,27 @@ class Safety(VampBehaviour):
 
 		return "EXITING VAMP"
 
-	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext) -> None:
+	def on_cue_entry(self, cue: Cue, context: PlaybackContext) -> None:
 		self._extra_loops = 0
 		self._activated = False
 
-	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext) -> None:
+	def on_exit_requested(self, cue: Cue, context: PlaybackContext) -> None:
 		self._extra_loops += 1
 		self._activated = True
 
-	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext) -> None:
+	def on_cue_exit(self, cue: Cue, context: PlaybackContext) -> None:
 		if self._extra_loops > 0:
 			self._extra_loops -= 1
-			context.position_samples = vamp.start_sample(context.samplerate_hz)
+			context.position_samples = cue.start_sample(context.samplerate_hz)
 		else:
-			context.is_vamping = False
+			context.in_cue = False
 
 
-class Caesura(VampBehaviour):
-	"""Pauses playback upon entering the vamp region.
+class Caesura(CueBehaviour):
+	"""Pauses playback upon entering the cue region.
 
 	Waits for the user to press ENTER, then resumes and
-	continues past the vamp. Named after the musical term
+	continues past the cue. Named after the musical term
 	for a pause or break.
 	"""
 
@@ -290,28 +318,28 @@ class Caesura(VampBehaviour):
 	def active_message(self) -> str:
 		return "PAUSED"
 
-	def on_vamp_entry(self, vamp: Vamp, context: PlaybackContext) -> None:
+	def on_cue_entry(self, cue: Cue, context: PlaybackContext) -> None:
 		context.is_paused = True
 
-	def on_exit_requested(self, vamp: Vamp, context: PlaybackContext) -> None:
+	def on_exit_requested(self, cue: Cue, context: PlaybackContext) -> None:
 		context.is_paused = False
-		context.is_vamping = False
+		context.in_cue = False
 
-	def on_vamp_exit(self, vamp: Vamp, context: PlaybackContext) -> None:
+	def on_cue_exit(self, cue: Cue, context: PlaybackContext) -> None:
 		pass
 
 
 @dataclass
-class Vamp:
-	"""A vamp region: a start time, optional end time, and a
-	behaviour that controls looping and exit strategy.
+class Cue:
+	"""A cue region: a start time, optional end time, and a
+	behaviour that controls what happens during playback.
 
 	For point-in-time behaviours like Caesura, end_time can be
 	omitted and defaults to start_time.
 	"""
 
 	start_time: timedelta
-	behaviour: VampBehaviour
+	behaviour: CueBehaviour
 	end_time: timedelta | None = None
 
 	def start_sample(self, samplerate_hz: int) -> int:
@@ -321,19 +349,19 @@ class Vamp:
 			samplerate_hz: The audio sample rate in Hertz.
 
 		Returns:
-			The sample index at the start of this vamp.
+			The sample index at the start of this cue.
 		"""
 		return int(self.start_time.total_seconds() * samplerate_hz)
 
 	def end_sample(self, samplerate_hz: int) -> int:
 		"""Convert end time to a sample index. Falls back to
-		start_sample for point-in-time vamps.
+		start_sample for point-in-time cues.
 
 		Args:
 			samplerate_hz: The audio sample rate in Hertz.
 
 		Returns:
-			The sample index at the end of this vamp.
+			The sample index at the end of this cue.
 		"""
 		t = self.end_time if self.end_time is not None else self.start_time
 		return int(t.total_seconds() * samplerate_hz)
