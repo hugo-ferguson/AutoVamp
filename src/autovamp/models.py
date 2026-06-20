@@ -257,7 +257,7 @@ class Repeat(CueBehaviour):
 		return _GREEN
 
 	def on_cue_entry(self, cue: Cue, context: PlaybackContext) -> None:
-		self._remaining = self._repetitions
+		self._remaining = self._repetitions - 1
 
 	@property
 	def status_message(self) -> str | None:

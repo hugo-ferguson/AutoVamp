@@ -57,12 +57,12 @@ KEY_BINDINGS: list[tuple[tuple[bytes, ...], str, str, str]] = [
 	((b" ",), "SPACE", "play/pause", "play_pause"),
 	((b"\r", b"\n"), "ENTER", "exit cue", "exit_cue"),
 	((b"q", b"Q"), "Q", "quit", "quit"),
-	((b"\x1b[D",), f"{SYM_ARROW_L}/{SYM_ARROW_R}", f"{SYM_PLUS_MINUS}5s", "seek:-5"),
-	((b"\x1b[C",), "", "", "seek:5"),
-	((b"\x1b[1;3D",), f"ALT+{f"{SYM_ARROW_L}/{SYM_ARROW_R}"}", f"{SYM_PLUS_MINUS}1s", "seek:-1"),
-	((b"\x1b[1;3C",), "", "", "seek:1"),
-	((b"\x1b[1;5D",), f"CTRL+{f"{SYM_ARROW_L}/{SYM_ARROW_R}"}", f"{SYM_PLUS_MINUS}30s", "seek:-30"),
-	((b"\x1b[1;5C",), "", "", "seek:30"),
+	((b"\x1b[D", b"\xe0K"), f"{SYM_ARROW_L}/{SYM_ARROW_R}", f"{SYM_PLUS_MINUS}5s", "seek:-5"),
+	((b"\x1b[C", b"\xe0M"), "", "", "seek:5"),
+	((b"\x1b[1;3D", b"\x00K"), f"ALT+{f"{SYM_ARROW_L}/{SYM_ARROW_R}"}", f"{SYM_PLUS_MINUS}1s", "seek:-1"),
+	((b"\x1b[1;3C", b"\x00M"), "", "", "seek:1"),
+	((b"\x1b[1;5D", b"\xe0s"), f"CTRL+{f"{SYM_ARROW_L}/{SYM_ARROW_R}"}", f"{SYM_PLUS_MINUS}30s", "seek:-30"),
+	((b"\x1b[1;5C", b"\xe0t"), "", "", "seek:30"),
 	((b"\x1b",), "ESC", "restart", "restart"),
 ]
 
@@ -328,12 +328,23 @@ class CliApp:
 			return True
 
 		if sys.platform == "win32":
+			# Windows extended key prefixes. Arrow keys,
+			# function keys, and similar produce a two-call
+			# sequence from getwch(): a prefix byte followed
+			# by a scan code byte.
+			_WIN_EXTENDED_PREFIXES = ("\xe0", "\x00")
+
 			def read_keys() -> None:
 				import msvcrt
 				while not self._app_done.is_set():
 					if msvcrt.kbhit():
-						ch = msvcrt.getwch()
-						if not handle_input(ch.encode()):
+						char = msvcrt.getwch()
+						if char in _WIN_EXTENDED_PREFIXES:
+							scan = msvcrt.getwch()
+							data = bytes([ord(char), ord(scan)])
+						else:
+							data = bytes([ord(char)])
+						if not handle_input(data):
 							return
 					else:
 						time.sleep(KEY_POLL_INTERVAL_SECONDS)

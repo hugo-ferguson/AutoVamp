@@ -58,7 +58,9 @@ class VampEngine:
 		self._playhead_samples: int = 0
 		self._in_cue: bool = False
 		self._is_paused: bool = False
+		self._paused_by_cue: bool = False
 		self._current_cue: Cue | None = None
+		self._cue_stack: list[Cue] = []
 		self._is_playing: bool = False
 		self._lock: threading.Lock = threading.Lock()
 		self._done: threading.Event = threading.Event()
@@ -123,8 +125,14 @@ class VampEngine:
 		self._done.set()
 
 	def toggle_pause(self) -> None:
-		"""Toggle between paused and playing states."""
+		"""Toggle between paused and playing states.
+
+		Ignored when a cue behaviour is controlling the pause
+		(e.g. a caesura). The cue must be exited via ENTER.
+		"""
 		with self._lock:
+			if self._paused_by_cue:
+				return
 			self._is_paused = not self._is_paused
 
 	def seek(self, offset_seconds: float) -> None:
@@ -147,6 +155,8 @@ class VampEngine:
 			# Recalculate which cue we are in or approaching.
 			self._in_cue = False
 			self._current_cue = None
+			self._cue_stack.clear()
+			self._paused_by_cue = False
 			self._next_cue_index = 0
 
 			for i, cue in enumerate(self._cues):
@@ -184,6 +194,11 @@ class VampEngine:
 
 				self._apply_context(context)
 
+				# If we exited a nested cue, resume the outer one.
+				if not self._in_cue and self._cue_stack:
+					self._current_cue = self._cue_stack.pop()
+					self._in_cue = True
+
 	def _make_context(self) -> PlaybackContext:
 		"""Create a mutable PlaybackContext from the current state.
 
@@ -211,7 +226,34 @@ class VampEngine:
 		"""
 		self._playhead_samples = context.position_samples
 		self._in_cue = context.in_cue
+		if context.is_paused and not self._is_paused:
+			self._paused_by_cue = True
+		elif not context.is_paused and self._paused_by_cue:
+			self._paused_by_cue = False
 		self._is_paused = context.is_paused
+
+	def _handle_cue_exit(self) -> None:
+		"""Handle state after a cue's on_cue_exit completes.
+
+		If the cue exited and there is an outer cue on the stack,
+		resume it. If the cue looped (still in_cue), recalculate
+		the next cue index so inner cues retrigger on each pass.
+		Must hold the lock.
+		"""
+		if not self._in_cue and self._cue_stack:
+			self._current_cue = self._cue_stack.pop()
+			self._in_cue = True
+		elif self._in_cue:
+			# Vamp looped. Find first cue ahead of the
+			# rewound playhead so inner cues retrigger.
+			for i in range(len(self._cues)):
+				if (
+					self._cues[i].start_sample(self._samplerate_hz)
+					> self._playhead_samples
+				):
+					self._next_cue_index = i
+					return
+			self._next_cue_index = len(self._cues)
 
 	def _audio_callback(
 			self,
@@ -283,6 +325,32 @@ class VampEngine:
 				remaining_frames = frames - written_frames
 
 				if self._in_cue and self._current_cue is not None:
+					# Check if playhead reached a nested cue
+					# (e.g. a caesura inside a vamp).
+					if (
+							self._next_cue_index < len(self._cues)
+							and self._playhead_samples
+							>= self._cues[
+						self._next_cue_index
+					].start_sample(self._samplerate_hz)
+					):
+						self._cue_stack.append(self._current_cue)
+						self._current_cue = (
+							self._cues[self._next_cue_index]
+						)
+						self._next_cue_index += 1
+
+						context = self._make_context()
+						self._current_cue.behaviour.on_cue_entry(
+							self._current_cue, context
+						)
+						self._apply_context(context)
+
+						if self._is_paused:
+							outdata[written_frames:] = 0
+							return
+						continue
+
 					# Inside a cue: copy up to the end boundary.
 					end_sample = self._current_cue.end_sample(
 						self._samplerate_hz
@@ -293,6 +361,23 @@ class VampEngine:
 						end_sample - self._playhead_samples,
 					)
 
+					# Stop the chunk at the next inner cue
+					# boundary so it triggers on the next pass.
+					if self._next_cue_index < len(self._cues):
+						next_start = self._cues[
+							self._next_cue_index
+						].start_sample(self._samplerate_hz)
+						if (
+							self._playhead_samples
+							< next_start
+							< end_sample
+						):
+							chunk_frames = min(
+								chunk_frames,
+								next_start
+								- self._playhead_samples,
+							)
+
 					if chunk_frames <= 0:
 						# At or past the cue end boundary.
 						# Let the behaviour decide: loop or exit.
@@ -301,6 +386,7 @@ class VampEngine:
 							self._current_cue, context
 						)
 						self._apply_context(context)
+						self._handle_cue_exit()
 						continue
 
 					end = written_frames + chunk_frames
@@ -324,6 +410,7 @@ class VampEngine:
 						)
 
 						self._apply_context(context)
+						self._handle_cue_exit()
 
 				else:
 					# Normal playback: copy up to the next cue
