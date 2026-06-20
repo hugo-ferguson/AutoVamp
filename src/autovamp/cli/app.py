@@ -39,6 +39,8 @@ SYM_DOT = "\u00b7"        		# ·
 SYM_PLUS_MINUS = "\u00b1"  		# ±
 SYM_ARROW_L = "\u2190"  		# ←
 SYM_ARROW_R = "\u2192"  		# →
+SYM_ARROW_U = "\u2191"  		# ↑
+SYM_ARROW_D = "\u2193"  		# ↓
 
 # Progress bar width in characters.
 BAR_WIDTH = 40
@@ -64,6 +66,8 @@ KEY_BINDINGS: list[tuple[tuple[bytes, ...], str, str, str]] = [
 	((b"\x1b[1;5D", b"\xe0s"), f"CTRL+{f"{SYM_ARROW_L}/{SYM_ARROW_R}"}", f"{SYM_PLUS_MINUS}30s", "seek:-30"),
 	((b"\x1b[1;5C", b"\xe0t"), "", "", "seek:30"),
 	((b"\x1b",), "ESC", "restart", "restart"),
+	((b"\x1b[A", b"\xe0H"), SYM_ARROW_U, "prev track", "prev_track"),
+	((b"\x1b[B", b"\xe0P"), SYM_ARROW_D, "next track", "next_track"),
 ]
 
 # Total display width: PAD_X + state prefix + bar + decorations.
@@ -101,6 +105,10 @@ class CliApp:
 		# key reader knows to route SPACE to _next_track.
 		self._waiting: bool = False
 
+		# Set to +1 or -1 by the key reader to skip tracks.
+		# The run loop checks this after each track finishes.
+		self._skip_direction: int = 0
+
 	def run(self) -> None:
 		"""Play all tracks in sequence.
 
@@ -111,9 +119,13 @@ class CliApp:
 		"""
 		self._start_key_reader()
 
-		for i, track in enumerate(self._tracks):
+		i = 0
+		while i < len(self._tracks):
 			if self._app_done.is_set():
 				break
+
+			track = self._tracks[i]
+			self._skip_direction = 0
 
 			engine = VampEngine(
 				filepath=track.filepath, cues=track.cues,
@@ -125,6 +137,16 @@ class CliApp:
 			self._validate_cues(track, engine)
 			self._print_header(i + 1)
 
+			if not track.autostart:
+				self._wait_for_input(
+					"Press SPACE to start."
+				)
+				if self._app_done.is_set():
+					break
+				if self._skip_direction != 0:
+					i = max(0, i + self._skip_direction)
+					continue
+
 			engine.play()
 			self._status_loop()
 			engine.stop()
@@ -132,14 +154,12 @@ class CliApp:
 			if self._app_done.is_set():
 				break
 
-			# Wait between tracks unless the next one autostarts
-			# or this is the last track.
-			if i < len(self._tracks) - 1:
-				next_track = self._tracks[i + 1]
-				if not next_track.autostart:
-					self._wait_for_next_track(i + 2)
-					if self._app_done.is_set():
-						break
+			# If a skip was requested, jump in that direction.
+			if self._skip_direction != 0:
+				i = max(0, i + self._skip_direction)
+				continue
+
+			i += 1
 
 		self._app_done.set()
 
@@ -265,6 +285,11 @@ class CliApp:
 			f" {DIM}{SYM_DOT}{RESET} "
 			f"{DIM}ESC{RESET} restart"
 		)
+		if len(self._tracks) > 1:
+			print(
+				f"{PAD_X}{DIM}{SYM_ARROW_U}/{SYM_ARROW_D}{RESET}"
+				f" prev/next track"
+			)
 		print(sep)
 		print(PAD_Y, end="")
 
@@ -324,6 +349,13 @@ class CliApp:
 			elif action.startswith("seek:"):
 				if self._engine is not None:
 					self._engine.seek(float(action.split(":")[1]))
+			elif action in ("next_track", "prev_track"):
+				self._skip_direction = (
+					1 if action == "next_track" else -1
+				)
+				if self._engine is not None:
+					self._engine.stop()
+				self._next_track.set()
 
 			return True
 
@@ -386,24 +418,16 @@ class CliApp:
 
 	# ── Between-track waiting ──────────────────────────────
 
-	def _wait_for_next_track(self, next_num: int) -> None:
-		"""Pause between tracks until the user presses SPACE.
+	def _wait_for_input(self, message: str) -> None:
+		"""Pause and wait for the user to press SPACE.
 
 		Args:
-			next_num: 1-based index of the upcoming track.
+			message: Text shown while waiting.
 		"""
 		self._waiting = True
 		self._next_track.clear()
 
-		basename = os.path.basename(
-			self._tracks[next_num - 1].filepath,
-		)
-
-		print(
-			f"{PAD_Y}{PAD_X}{DIM}"
-			f"Up next: {basename}. "
-			f"Press SPACE to continue.{RESET}"
-		)
+		print(f"{PAD_Y}{PAD_X}{DIM}{message}{RESET}")
 
 		while (
 			not self._next_track.is_set()
