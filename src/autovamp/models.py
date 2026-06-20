@@ -89,7 +89,7 @@ class PlaybackContext:
 
 @dataclass
 class PlaybackState:
-	"""Read-only playback state snapshot used by the CLI.
+	"""Read-only playback state snapshot used by frontends.
 
 	Unlike PlaybackContext, this is not passed to behaviours
 	and modifications have no effect on the engine.
@@ -100,6 +100,7 @@ class PlaybackState:
 	is_paused: bool
 	is_playing: bool
 	current_cue: Cue | None
+	paused_by_cue: bool = False
 
 
 _MAGENTA = "\033[35m"
@@ -131,6 +132,11 @@ class CueBehaviour(ABC):
 		"""Label shown in the status line while the cue is
 		active. Defaults to 'VAMPING'."""
 		return "VAMPING"
+
+	@property
+	def exit_label(self) -> str:
+		"""Label for the exit/action button in the GUI."""
+		return f"Exit {self}"
 
 	@property
 	def status_message(self) -> str | None:
@@ -253,6 +259,10 @@ class Repeat(CueBehaviour):
 		return "Repeat"
 
 	@property
+	def exit_label(self) -> str:
+		return "Add Repetition"
+
+	@property
 	def colour(self) -> str:
 		return _GREEN
 
@@ -289,6 +299,10 @@ class Safety(CueBehaviour):
 
 	def __str__(self) -> str:
 		return "Safety"
+
+	@property
+	def exit_label(self) -> str:
+		return "Add Repetition"
 
 	@property
 	def colour(self) -> str:
@@ -329,6 +343,10 @@ class Caesura(CueBehaviour):
 
 	def __str__(self) -> str:
 		return "Caesura"
+
+	@property
+	def exit_label(self) -> str:
+		return "Resume"
 
 	@property
 	def colour(self) -> str:

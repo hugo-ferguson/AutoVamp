@@ -1,0 +1,44 @@
+AutoVamp GUI Help
+
+Controls
+
+  Play / Pause       Space or Play button
+  Exit current cue   Enter or Exit Cue button
+  Restart track      Escape or Restart button
+  Seek 5s            Left / Right arrow
+  Seek 1s            Alt + Left / Right arrow
+  Seek 30s           Ctrl + Left / Right arrow
+  Previous track     Up arrow or Prev Track button
+  Next track         Down arrow or Next Track button
+
+You can also click anywhere on the timeline to seek
+to that position.
+
+Timeline
+
+The timeline shows coloured regions for each cue.
+Hover over a region to see its type and time range.
+The playhead is shown as a white vertical line.
+
+Cue Behaviours
+
+  Jump       Loops the region until you exit, then
+             immediately jumps past it.
+
+  Continue   Loops indefinitely. On exit, finishes the
+             current iteration before moving on.
+
+  Repeat     Loops a set number of times, then exits.
+             Press Enter to queue one additional loop.
+
+  Safety     Plays through once and exits by default.
+             Press Enter to queue additional loops.
+
+  Caesura    Pauses playback at the marked point.
+             Press Enter (or Space) to resume.
+
+Opening Files
+
+Use File > Open to load a .toml config file or an
+audio file. Config files define tracks with cues.
+See the project README for the TOML format.

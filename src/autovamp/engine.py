@@ -91,6 +91,7 @@ class VampEngine:
 				is_paused=self._is_paused,
 				is_playing=self._is_playing,
 				current_cue=self._current_cue,
+				paused_by_cue=self._paused_by_cue,
 			)
 
 	@property

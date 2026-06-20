@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install "nuitka[onefile]" ordered-set
-          pip install .
+          pip install ".[gui]"
 
       - name: Build executable
         run: |

@@ -13,8 +13,14 @@ dependencies = [
     "soundfile",
 ]
 
+[project.optional-dependencies]
+gui = ["dearpygui"]
+
 [tool.setuptools.dynamic]
 version = {attr = "autovamp.__version__"}
+
+[tool.setuptools.package-data]
+autovamp = ["gui/fonts/*.ttf", "gui/fonts/*.txt", "gui/help.txt"]
 
 [project.scripts]
 autovamp = "autovamp.__main__:main"

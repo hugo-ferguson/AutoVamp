@@ -1,13 +1,14 @@
 """Command-line entry point and argument parsing for AutoVamp.
 
 Handles CLI argument parsing, TOML config loading, track and
-cue construction from user input, and validation before handing
-off to the CLI app.
+cue construction from user input, and launches either the CLI
+or GUI frontend.
 """
 
 from __future__ import annotations
 import argparse
 import os
+import sys
 import tomllib
 from . import __version__
 from .models import (
@@ -21,7 +22,6 @@ from .models import (
 	CueBehaviour,
 	parse_timestamp,
 )
-from .cli.app import CliApp
 
 # Maps behaviour names to their corresponding CueBehaviour
 # classes. Used when parsing both CLI arguments and TOML files.
@@ -37,7 +37,7 @@ BEHAVIOURS: dict[str, type[CueBehaviour]] = {
 def _error(message: str) -> None:
 	"""Print an error message to stdout and exit with code 1."""
 	print(f"Error: {message}")
-	raise SystemExit(1)
+	raise SystemExit(message)
 
 
 def build_cue(raw: dict[str, str]) -> Cue:
@@ -224,11 +224,44 @@ def parse_args() -> argparse.Namespace:
 		),
 	)
 
+	parser.add_argument(
+		"--gui",
+		action="store_true",
+		help="Launch the graphical interface instead of the CLI",
+	)
+
 	return parser.parse_args()
 
 
+def _launch_gui(tracks: list[Track]) -> None:
+	"""Import and launch the GUI frontend.
+
+	Exits with a helpful message if dearpygui is not installed.
+	"""
+	try:
+		from .gui.app import GuiApp
+	except ImportError:
+		print(
+			"GUI requires dearpygui. "
+			"Install with: pip install autovamp[gui]"
+		)
+		raise SystemExit(1)
+
+	GuiApp(tracks).run()
+
+
 def main() -> None:
-	"""Entry point for the AutoVamp command-line application."""
+	"""Entry point for AutoVamp.
+
+	With no arguments, launches the GUI with a file picker.
+	With arguments, parses them and launches the CLI (or GUI
+	if --gui is passed).
+	"""
+	# No arguments: launch GUI with file picker.
+	if len(sys.argv) <= 1:
+		_launch_gui(tracks=[])
+		return
+
 	args = parse_args()
 
 	if args.file.endswith(".toml"):
@@ -253,8 +286,11 @@ def main() -> None:
 		]
 		tracks = [Track(filepath=args.file, cues=cues)]
 
-	app = CliApp(tracks)
-	app.run()
+	if args.gui:
+		_launch_gui(tracks)
+	else:
+		from .cli.app import CliApp
+		CliApp(tracks).run()
 
 
 if __name__ == "__main__":
