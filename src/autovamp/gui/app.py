@@ -9,12 +9,14 @@ keyboard shortcuts, and a file picker for standalone launch.
 from __future__ import annotations
 
 import os
+import sys
+from datetime import timedelta
 
 import dearpygui.dearpygui as dpg
 
 from .. import __version__
 from ..engine import VampEngine
-from ..models import Track, format_timestamp
+from ..models import PlaybackState, Track, format_timestamp
 from . import dialogs
 from .timeline import ANSI_TO_RGBA, DEFAULT_COLOUR, Timeline
 
@@ -43,10 +45,16 @@ class GuiApp:
 		self._tracks: list[Track] = tracks
 		self._engine: VampEngine | None = None
 		self._track_index: int = 0
+		# True between tracks, when we hold for the user to press Play.
 		self._waiting: bool = False
+		# Set once every track has finished, so the end-of-playback
+		# handler runs only once rather than on every frame.
+		self._finished: bool = False
 		self._bold_font: int = 0
 		self._timeline: Timeline | None = None
 
+		# Dear PyGui widget tags, populated in _build_ui. Kept on the
+		# instance so _update can mutate them each frame.
 		self._track_info_text: int = 0
 		self._duration_text: int = 0
 		self._time_text: int = 0
@@ -95,6 +103,13 @@ class GuiApp:
 	def _load_font(self) -> None:
 		"""Load the bundled Open Sans regular and bold fonts."""
 		if not os.path.isfile(FONT_PATH):
+			# Usually means a frozen build didn't bundle the fonts
+			# directory; fall back to Dear PyGui's default font.
+			print(
+				f"Warning: font not found at {FONT_PATH}, "
+				f"using the default font.",
+				file=sys.stderr,
+			)
 			return
 		with dpg.font_registry():
 			font = dpg.add_font(FONT_PATH, FONT_SIZE)
@@ -173,19 +188,24 @@ class GuiApp:
 			dpg.add_separator()
 			dpg.add_spacer(height=6)
 
+			# Bound methods are wrapped in lambdas throughout: in compiled
+			# builds (Nuitka) a bound method is a 'compiled_method' that
+			# Dear PyGui's dispatcher fails to recognise as a method, so it
+			# miscounts the arguments and silently drops the callback. A
+			# lambda is a plain function that DPG introspects correctly.
 			with dpg.group(horizontal=True):
 				self._play_button = dpg.add_button(
 					label="Play [Space]",
-					callback=self._on_play_pause,
+					callback=lambda: self._on_play_pause(),
 				)
 				self._exit_cue_button = dpg.add_button(
 					label="Exit Cue [Enter]",
-					callback=self._on_exit_cue,
+					callback=lambda: self._on_exit_cue(),
 					show=False,
 				)
 				self._restart_button = dpg.add_button(
 					label="Restart [Esc]",
-					callback=self._on_restart,
+					callback=lambda: self._on_restart(),
 				)
 
 			dpg.add_spacer(height=4)
@@ -222,12 +242,12 @@ class GuiApp:
 			)
 			dpg.add_button(
 				label="Prev Track [Up]",
-				callback=self._prev_track,
+				callback=lambda: self._prev_track(),
 				parent=self._track_nav_group,
 			)
 			dpg.add_button(
 				label="Next Track [Down]",
-				callback=self._next_track,
+				callback=lambda: self._next_track(),
 				parent=self._track_nav_group,
 			)
 
@@ -253,31 +273,31 @@ class GuiApp:
 		with dpg.handler_registry():
 			dpg.add_key_press_handler(
 				dpg.mvKey_Spacebar,
-				callback=self._on_play_pause,
+				callback=lambda: self._on_play_pause(),
 			)
 			dpg.add_key_press_handler(
 				dpg.mvKey_Return,
-				callback=self._on_exit_cue,
+				callback=lambda: self._on_exit_cue(),
 			)
 			dpg.add_key_press_handler(
 				dpg.mvKey_Escape,
-				callback=self._on_restart,
+				callback=lambda: self._on_restart(),
 			)
 			dpg.add_key_press_handler(
 				dpg.mvKey_Left,
-				callback=self._on_left_arrow,
+				callback=lambda: self._on_left_arrow(),
 			)
 			dpg.add_key_press_handler(
 				dpg.mvKey_Right,
-				callback=self._on_right_arrow,
+				callback=lambda: self._on_right_arrow(),
 			)
 			dpg.add_key_press_handler(
 				dpg.mvKey_Up,
-				callback=self._prev_track,
+				callback=lambda: self._prev_track(),
 			)
 			dpg.add_key_press_handler(
 				dpg.mvKey_Down,
-				callback=self._next_track,
+				callback=lambda: self._next_track(),
 			)
 
 	def _build_cue_list(self) -> None:
@@ -336,11 +356,16 @@ class GuiApp:
 			self._track_texts.append(tag)
 
 	def _load_track(self, index: int) -> None:
-		"""Load a track by index and prepare for playback."""
+		"""Load a track by index and prepare for playback.
+
+		Args:
+			index: Position of the track in self._tracks.
+		"""
 		if self._engine is not None:
 			self._engine.stop()
 
 		self._track_index = index
+		self._finished = False
 		track = self._tracks[index]
 
 		try:
@@ -418,6 +443,7 @@ class GuiApp:
 
 		next_index = self._track_index + 1
 		if next_index >= len(self._tracks):
+			self._finished = True
 			dpg.set_value(self._status_text, "DONE")
 			dpg.set_value(self._substatus_text, "")
 			dpg.configure_item(self._play_button, label="Play")
@@ -436,6 +462,7 @@ class GuiApp:
 			self._engine.done.is_set()
 			and not state.is_playing
 			and not self._waiting
+			and not self._finished
 		):
 			self._on_track_ended()
 			return
@@ -444,7 +471,6 @@ class GuiApp:
 		self._timeline.handle_click()
 		self._timeline.update_tooltip()
 
-		from datetime import timedelta
 		duration = self._engine.duration_seconds
 		position = timedelta(
 			seconds=(
@@ -506,11 +532,22 @@ class GuiApp:
 				self._exit_cue_button, show=False,
 			)
 
+		self._highlight_active_cue(state)
+		self._update_current_track_label(state)
+
+	def _highlight_active_cue(self, state: PlaybackState) -> None:
+		"""Brighten the cue list row for the cue currently playing.
+
+		Args:
+			state: The latest engine state snapshot.
+		"""
+		assert self._engine is not None
 		for i, row in enumerate(self._cue_texts):
 			cue = self._engine.cues[i]
 			colour = ANSI_TO_RGBA.get(
 				cue.behaviour.colour, DEFAULT_COLOUR,
 			)
+			# Lift the active cue above the others so it stands out.
 			if (
 				state.in_cue
 				and state.current_cue is not None
@@ -525,21 +562,32 @@ class GuiApp:
 				for child in dpg.get_item_children(row, 1):
 					dpg.configure_item(child, color=colour)
 
-		if self._track_texts and self._track_index < len(self._track_texts):
-			tag = self._track_texts[self._track_index]
-			basename = os.path.basename(
-				self._tracks[self._track_index].filepath,
-			)
-			idx = self._track_index + 1
-			if state.is_paused or self._waiting:
-				label = "Paused"
-			elif state.is_playing:
-				label = "Playing"
-			else:
-				label = "Stopped"
-			dpg.set_value(
-				tag, f"  ({idx}) [{label}] {basename}",
-			)
+	def _update_current_track_label(self, state: PlaybackState) -> None:
+		"""Tag the current track in the list with its play state.
+
+		Args:
+			state: The latest engine state snapshot.
+		"""
+		if not (
+			self._track_texts
+			and self._track_index < len(self._track_texts)
+		):
+			return
+
+		tag = self._track_texts[self._track_index]
+		basename = os.path.basename(
+			self._tracks[self._track_index].filepath,
+		)
+		idx = self._track_index + 1
+		if state.is_paused or self._waiting:
+			label = "Paused"
+		elif state.is_playing:
+			label = "Playing"
+		else:
+			label = "Stopped"
+		dpg.set_value(
+			tag, f"  ({idx}) [{label}] {basename}",
+		)
 
 	def _on_play_pause(self) -> None:
 		"""Toggle play/pause or start playback if waiting."""
@@ -571,7 +619,11 @@ class GuiApp:
 			self._engine.seek(-1e9)
 
 	def _on_seek(self, offset: float) -> None:
-		"""Seek by a relative offset in seconds."""
+		"""Seek by a relative offset in seconds.
+
+		Args:
+			offset: Seconds to move (negative seeks backwards).
+		"""
 		if self._engine is not None:
 			self._engine.seek(offset)
 
@@ -596,7 +648,13 @@ class GuiApp:
 	def _on_file_selected(
 		self, sender: int, app_data: dict,
 	) -> None:
-		"""Handle file selection from the picker."""
+		"""Handle file selection from the picker.
+
+		Args:
+			sender: The Dear PyGui file dialog item (unused).
+			app_data: Dialog result; its 'file_path_name' key
+				holds the chosen path.
+		"""
 		filepath = app_data.get("file_path_name", "")
 		if not filepath:
 			return

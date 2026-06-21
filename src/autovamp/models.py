@@ -145,7 +145,7 @@ class CueBehaviour(ABC):
 		return None
 
 	@abstractmethod
-	def on_cue_entry(self, cue: Cue, context: PlaybackContext, ) -> None:
+	def on_cue_entry(self, cue: Cue, context: PlaybackContext) -> None:
 		"""Called when the playhead first enters the cue region.
 
 		Args:

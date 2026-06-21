@@ -27,9 +27,19 @@ def show_file_picker(callback) -> None:
 	Args:
 		callback: Dear PyGui callback receiving (sender, app_data).
 	"""
+	# Wrap the callback in a plain nested function rather than passing
+	# it straight through. In compiled builds (Nuitka), a bound method
+	# is a 'compiled_method', which Dear PyGui's dispatcher fails to
+	# recognise as a method; it then miscounts the arguments, calls the
+	# callback with one too many, and silently swallows the resulting
+	# TypeError -- so selecting a file appears to do nothing. A nested
+	# function is a plain callable that DPG introspects correctly.
+	def _on_select(sender, app_data, user_data=None) -> None:
+		callback(sender, app_data)
+
 	with dpg.file_dialog(
 		label="Open Audio or TOML File",
-		callback=callback,
+		callback=_on_select,
 		width=580,
 		height=500,
 	):
@@ -49,7 +59,7 @@ def load_file(filepath: str) -> list[Track]:
 	Returns:
 		A list of Track instances.
 	"""
-	if filepath.endswith(".toml"):
+	if filepath.lower().endswith(".toml"):
 		return load_toml(filepath)
 	return [Track(filepath=filepath, cues=[])]
 

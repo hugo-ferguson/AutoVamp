@@ -264,7 +264,7 @@ def main() -> None:
 
 	args = parse_args()
 
-	if args.file.endswith(".toml"):
+	if args.file.lower().endswith(".toml"):
 		if args.cues:
 			_error(
 				"--cue flags cannot be used with a "
