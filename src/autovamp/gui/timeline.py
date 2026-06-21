@@ -189,10 +189,11 @@ class Timeline:
 			cue_start = cue.start_time.total_seconds()
 			if cue.end_time is not None:
 				cue_end = cue.end_time.total_seconds()
+			elif tw > 0:
+				# Give a point cue the same hover width it's drawn with.
+				cue_end = cue_start + (duration * POINT_CUE_WIDTH / tw)
 			else:
-				cue_end = cue_start + (
-					duration * POINT_CUE_WIDTH / tw
-				) if tw > 0 else cue_start
+				cue_end = cue_start
 
 			if cue_start <= time_at_mouse <= cue_end:
 				name = str(cue.behaviour)

@@ -61,9 +61,9 @@ KEY_BINDINGS: list[tuple[tuple[bytes, ...], str, str, str]] = [
 	((b"q", b"Q"), "Q", "quit", "quit"),
 	((b"\x1b[D", b"\xe0K"), f"{SYM_ARROW_L}/{SYM_ARROW_R}", f"{SYM_PLUS_MINUS}5s", "seek:-5"),
 	((b"\x1b[C", b"\xe0M"), "", "", "seek:5"),
-	((b"\x1b[1;3D", b"\x00K"), f"ALT+{f"{SYM_ARROW_L}/{SYM_ARROW_R}"}", f"{SYM_PLUS_MINUS}1s", "seek:-1"),
+	((b"\x1b[1;3D", b"\x00K"), f"ALT+{SYM_ARROW_L}/{SYM_ARROW_R}", f"{SYM_PLUS_MINUS}1s", "seek:-1"),
 	((b"\x1b[1;3C", b"\x00M"), "", "", "seek:1"),
-	((b"\x1b[1;5D", b"\xe0s"), f"CTRL+{f"{SYM_ARROW_L}/{SYM_ARROW_R}"}", f"{SYM_PLUS_MINUS}30s", "seek:-30"),
+	((b"\x1b[1;5D", b"\xe0s"), f"CTRL+{SYM_ARROW_L}/{SYM_ARROW_R}", f"{SYM_PLUS_MINUS}30s", "seek:-30"),
 	((b"\x1b[1;5C", b"\xe0t"), "", "", "seek:30"),
 	((b"\x1b",), "ESC", "restart", "restart"),
 	((b"\x1b[A", b"\xe0H"), SYM_ARROW_U, "prev track", "prev_track"),
@@ -277,7 +277,7 @@ class CliApp:
 			f"{DIM}Q{RESET} quit"
 		)
 		print(
-			f"{PAD_X}{DIM}{f"{SYM_ARROW_L}/{SYM_ARROW_R}"}{RESET} {SYM_PLUS_MINUS}5s"
+			f"{PAD_X}{DIM}{SYM_ARROW_L}/{SYM_ARROW_R}{RESET} {SYM_PLUS_MINUS}5s"
 			f" {DIM}{SYM_DOT}{RESET} "
 			f"{DIM}ALT{RESET} {SYM_PLUS_MINUS}1s"
 			f" {DIM}{SYM_DOT}{RESET} "
