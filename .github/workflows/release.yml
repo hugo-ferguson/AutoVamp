@@ -42,14 +42,19 @@ jobs:
       - name: Build app bundle (macOS)
         if: runner.os == 'macOS'
         run: |
-          # Name the entry script AutoVamp.py so Nuitka emits AutoVamp.app.
-          echo "from autovamp.__main__ import main; main()" > AutoVamp.py
+          echo "from autovamp.__main__ import main; main()" > entry.py
           python -m nuitka --standalone --macos-create-app-bundle \
             --assume-yes-for-downloads \
             --macos-app-name=AutoVamp \
             --macos-app-mode=gui \
             --include-package-data=autovamp \
-            AutoVamp.py
+            entry.py
+          # The executable is named after the entry script (entry). It
+          # must not match the bundled `autovamp` package dir even
+          # case-insensitively, or makedirs collides on macOS's
+          # case-insensitive filesystem. Rename only the .app wrapper;
+          # the display name comes from --macos-app-name.
+          mv entry.app AutoVamp.app
 
       - name: Zip artifact (Linux)
         if: runner.os == 'Linux'
