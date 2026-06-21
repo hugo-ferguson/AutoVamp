@@ -52,8 +52,21 @@ available on the
 [releases page](https://github.com/hugo-ferguson/AutoVamp/releases).
 No Python installation required.
 
-On macOS, you may need to allow the program to run in the 'Privacy & Security'
-page in settings.
+The macOS download is an `AutoVamp.app` bundle. Because it is not
+signed with an Apple Developer ID, macOS will refuse to open it on
+the first launch. To allow it:
+
+1. Right-click (or Control-click) `AutoVamp.app` and choose **Open**.
+2. Click **Open** in the dialog that appears.
+
+macOS remembers this, so later launches work normally. If the
+right-click step does not offer an **Open** option, go to **System
+Settings → Privacy & Security** and click **Open Anyway**, or clear
+the quarantine flag from a terminal:
+
+```
+xattr -cr AutoVamp.app
+```
 
 ## Usage
 

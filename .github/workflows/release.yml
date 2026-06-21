@@ -33,15 +33,35 @@ jobs:
           pip install "nuitka[onefile]" ordered-set
           pip install ".[gui]"
 
-      - name: Build executable
+      - name: Build executable (Linux/Windows)
+        if: runner.os != 'macOS'
         run: |
           echo "from autovamp.__main__ import main; main()" > entry.py
           python -m nuitka --onefile --assume-yes-for-downloads --include-windows-runtime-dlls=no --include-package-data=autovamp --output-filename=autovamp entry.py
 
-      - name: Zip artifact (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Build app bundle (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Name the entry script AutoVamp.py so Nuitka emits AutoVamp.app.
+          echo "from autovamp.__main__ import main; main()" > AutoVamp.py
+          python -m nuitka --standalone --macos-create-app-bundle \
+            --assume-yes-for-downloads \
+            --macos-app-name=AutoVamp \
+            --macos-app-mode=gui \
+            --include-package-data=autovamp \
+            AutoVamp.py
+
+      - name: Zip artifact (Linux)
+        if: runner.os == 'Linux'
         run: |
           zip autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip autovamp
+
+      - name: Zip artifact (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # ditto preserves the bundle's symlinks and ad-hoc signature,
+          # which plain `zip` can corrupt.
+          ditto -c -k --keepParent AutoVamp.app autovamp-${{ github.ref_name }}-${{ matrix.platform }}.zip
 
       - name: Zip artifact (Windows)
         if: runner.os == 'Windows'
