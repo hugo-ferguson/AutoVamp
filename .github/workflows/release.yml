@@ -37,7 +37,7 @@ jobs:
         if: runner.os != 'macOS'
         run: |
           echo "from autovamp.__main__ import main; main()" > entry.py
-          python -m nuitka --onefile --assume-yes-for-downloads --include-windows-runtime-dlls=no --include-package-data=autovamp --output-filename=autovamp entry.py
+          python -m nuitka --onefile --assume-yes-for-downloads --include-package-data=autovamp --output-filename=autovamp entry.py
 
       - name: Build app bundle (macOS)
         if: runner.os == 'macOS'
