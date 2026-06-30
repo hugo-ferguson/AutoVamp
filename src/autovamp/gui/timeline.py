@@ -55,6 +55,15 @@ class Timeline:
 		with dpg.tooltip(self._group):
 			self._tooltip_text = dpg.add_text("")
 
+		with dpg.item_handler_registry() as handler:
+			dpg.add_item_clicked_handler(
+				button=dpg.mvMouseButton_Left,
+				callback=lambda s, d: self._on_click(),
+			)
+		dpg.bind_item_handler_registry(
+			self._drawlist, handler,
+		)
+
 	@property
 	def cues(self) -> list[Cue]:
 		"""The cue list from the current engine, or empty."""
@@ -144,11 +153,9 @@ class Timeline:
 			parent=self._drawlist,
 		)
 
-	def handle_click(self) -> None:
+	def _on_click(self) -> None:
 		"""Seek the engine when the user clicks the timeline."""
 		if self._engine is None:
-			return
-		if not dpg.is_mouse_button_clicked(dpg.mvMouseButton_Left):
 			return
 
 		duration = self._engine.duration_seconds

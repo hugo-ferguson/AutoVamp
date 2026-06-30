@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from datetime import timedelta
 
 import dearpygui.dearpygui as dpg
@@ -50,6 +51,7 @@ class GuiApp:
 		# Set once every track has finished, so the end-of-playback
 		# handler runs only once rather than on every frame.
 		self._finished: bool = False
+		self._prev_state: PlaybackState | None = None
 		self._bold_font: int = 0
 		self._timeline: Timeline | None = None
 
@@ -94,6 +96,12 @@ class GuiApp:
 		while dpg.is_dearpygui_running():
 			self._update()
 			dpg.render_dearpygui_frame()
+			playing = (
+				self._prev_state is not None
+				and self._prev_state.is_playing
+				and not self._prev_state.is_paused
+			)
+			time.sleep(1 / 30 if playing else 1 / 10)
 
 		if self._engine is not None:
 			self._engine.stop()
@@ -366,6 +374,7 @@ class GuiApp:
 
 		self._track_index = index
 		self._finished = False
+		self._prev_state = None
 		track = self._tracks[index]
 
 		try:
@@ -452,7 +461,7 @@ class GuiApp:
 		self._load_track(next_index)
 
 	def _update(self) -> None:
-		"""Poll engine state and update all widgets."""
+		"""Update widgets when engine state changes."""
 		if self._engine is None:
 			return
 
@@ -467,8 +476,11 @@ class GuiApp:
 			self._on_track_ended()
 			return
 
+		if state == self._prev_state:
+			return
+		self._prev_state = state
+
 		self._timeline.draw()
-		self._timeline.handle_click()
 		self._timeline.update_tooltip()
 
 		duration = self._engine.duration_seconds
